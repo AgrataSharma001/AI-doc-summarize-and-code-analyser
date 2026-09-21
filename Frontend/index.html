@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A focused workspace for summarizing documents and understanding Python code.">
+  <title>Docode — A little more clarity</title>
+  <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/styles.css">
+  <script src="js/api.js" defer></script>
+  <script src="js/results.js" defer></script>
+  <script src="js/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#workspace">Skip to workspace</a>
+  <div class="shell">
+    <header class="header">
+      <a class="brand" href="./index.html" aria-label="Docode home"><img src="assets/logo.svg" alt="" width="36" height="36">docode<span class="brand-dot">.</span></a>
+      <span class="header-note"><span class="status-dot"></span>Your thinking space</span>
+    </header>
+    <main>
+      <section class="intro" aria-labelledby="page-title">
+        <p class="eyebrow">LESS READING. MORE UNDERSTANDING.</p>
+        <h1 id="page-title">A little more <span>clarity.</span></h1>
+        <p class="intro-copy">Find the essentials in your documents.<br>Make sense of the code in front of you.</p>
+      </section>
+      <section id="workspace" class="workspace" aria-label="Analysis workspace">
+        <div class="workspace-bar">
+          <div class="tabs" role="tablist" aria-label="Choose a tool">
+            <button id="document-tab" class="tab" type="button" role="tab" aria-selected="true" aria-controls="document-panel" data-mode="document"><span aria-hidden="true">▤</span> Documents</button>
+            <button id="code-tab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="code-panel" tabindex="-1" data-mode="code"><span class="code-symbol" aria-hidden="true">&lt;/&gt;</span> Code analyzer</button>
+          </div>
+          <span class="workspace-note">A fresh perspective, in a few clicks</span>
+        </div>
+        <div class="workspace-grid">
+          <div class="input-column">
+            <section id="document-panel" role="tabpanel" aria-labelledby="document-tab">
+              <div class="section-heading"><div><p class="eyebrow">01 / YOUR INPUT</p><h2>Start with a document</h2></div></div>
+              <p class="section-description">Drop in a file or paste the text you want to understand.</p>
+              <form id="document-form">
+                <fieldset id="document-fields">
+                  <legend class="sr-only">Document input and summary options</legend>
+                  <label class="drop-zone" id="drop-zone" for="document-file">
+                    <span class="upload-icon" aria-hidden="true">↑</span>
+                    <span><strong>Choose a file</strong> or drag it here</span>
+                    <span class="muted small">PDF, DOCX or TXT · up to 10 MB</span>
+                    <input id="document-file" type="file" accept=".pdf,.docx,.txt" aria-describedby="file-help">
+                  </label>
+                  <p id="file-help" class="sr-only">Text-based PDFs are supported. Scanned pages require backend OCR support.</p>
+                  <div id="selected-file" class="selected-file" hidden><span id="file-name"></span><button id="remove-file" type="button" class="text-button">Remove</button></div>
+                  <div class="separator"><span>or paste your text</span></div>
+                  <label for="document-text" class="sr-only">Document text</label>
+                  <textarea id="document-text" maxlength="200000" placeholder="An article, a report, that very long meeting recap…" spellcheck="true"></textarea>
+                  <div class="input-meta"><span id="document-input-hint">Your next insight starts here.</span><span id="document-count">0 characters</span></div>
+                  <div class="options">
+                    <div><label for="summary-length">Summary length</label><select id="summary-length"><option value="brief">Brief</option><option value="standard" selected>Balanced</option><option value="detailed">Detailed</option></select></div>
+                    <div><label for="summary-style">Format</label><select id="summary-style"><option value="paragraph">Paragraphs</option><option value="bullet_points">Bullet points</option></select></div>
+                  </div>
+                  <button class="primary-button" type="submit"><span>Summarize document</span><span aria-hidden="true">↗</span></button>
+                </fieldset>
+              </form>
+            </section>
+            <section id="code-panel" role="tabpanel" aria-labelledby="code-tab" hidden>
+              <div class="section-heading"><div><p class="eyebrow">01 / YOUR INPUT</p><h2>Get to know your code</h2></div><span class="pill">Python</span></div>
+              <p class="section-description">Understand the logic, spot concerns, and find a way forward.</p>
+              <form id="code-form">
+                <fieldset id="code-fields">
+                  <legend class="sr-only">Python source and analysis options</legend>
+                  <div class="code-toolbar"><label for="code-text">Source code</label><label class="file-button">Open .py file<input id="code-file" type="file" accept=".py" aria-label="Open a Python file"></label></div>
+                  <textarea id="code-text" class="code-editor" maxlength="200000" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="def average(values):&#10;    return sum(values) / len(values)"></textarea>
+                  <div class="input-meta"><span>Analyzed as text; never executed by this interface.</span><span id="code-count">0 characters</span></div>
+                  <label for="code-context">What should it do? <span class="optional">Optional</span></label>
+                  <input id="code-context" class="text-input" type="text" maxlength="2000" placeholder="e.g. Calculate the average of a list of numbers">
+                  <div class="options single"><div><label for="explanation-level">Explanation level</label><select id="explanation-level"><option value="beginner">Beginner-friendly</option><option value="technical">Technical</option></select></div></div>
+                  <button class="primary-button" type="submit"><span>Analyze code</span><span aria-hidden="true">↗</span></button>
+                </fieldset>
+              </form>
+            </section>
+          </div>
+          <section class="output-column" aria-labelledby="result-title" aria-busy="false" id="result-panel">
+            <div class="section-heading"><div><p class="eyebrow">02 / THE TAKEAWAY</p><h2 id="result-title">Room for understanding</h2></div><span id="result-badge" class="pill" hidden>Ready</span></div>
+            <div id="empty-state" class="empty-state"><div class="empty-art" aria-hidden="true"><span class="paper paper-back"></span><span class="paper paper-front"><i></i><i></i><i></i><span>✦</span></span></div><h3>The good part goes here.</h3><p>Add your content and we’ll turn it into<br>something easier to work with.</p><div class="empty-tags"><span>Clear summaries</span><span>Useful explanations</span></div></div>
+            <div id="loading-state" class="loading-state" hidden><span class="spinner" aria-hidden="true"></span><h3>Making sense of it…</h3><p>Longer inputs may take a little more time.</p><button type="button" id="cancel-request" class="secondary-button">Cancel request</button></div>
+            <div id="error-state" class="error-state" role="alert" hidden></div>
+            <div id="result-content" class="result-content" hidden></div>
+            <div id="result-actions" class="result-actions" hidden><button type="button" id="copy-result" class="secondary-button">Copy result</button><button type="button" id="download-result" class="secondary-button">Download .txt</button></div>
+            <p id="result-note" class="result-note" hidden>AI can miss details. Check important points against your source.</p>
+          </section>
+        </div>
+        <div class="workspace-footer"><span>Built for a clearer first read.</span><span>PDF · DOCX · TXT · Python</span></div>
+      </section>
+      <p class="connection-note">Connect this interface to the Python API to generate results. Processing and storage depend on your backend configuration.</p>
+      <p id="app-status" class="sr-only" role="status" aria-live="polite"></p>
+    </main>
+    <footer class="footer"><span>docode. <span class="muted">Less noise, more meaning.</span></span><span>Made for curious minds <span aria-hidden="true">↗</span></span></footer>
+  </div>
+</body>
+</html>
