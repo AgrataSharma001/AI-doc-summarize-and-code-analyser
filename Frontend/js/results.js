@@ -1,92 +1,37 @@
-/* Document response: summary (string), key_points (string[]),
- * limitations, source_ids, warnings (optional string[]).
- * Code response: explanation and/or purpose (string), findings (strings or
- * objects with title, message, line, severity, source, suggestion), suggestions
- * and tests (string[]), revised_code (optional string), warnings (string[]).
- * Model content is always inserted as text, never HTML.
- */
 window.DocodeResults = (() => {
-  const element = (id) => document.getElementById(id);
-  let exportText = '';
-  let exportMode = 'document';
-
-  function reset() {
-    ['empty-state', 'loading-state', 'error-state', 'result-content', 'result-actions', 'result-note', 'result-badge'].forEach((id) => { element(id).hidden = true; });
-    element('result-panel').setAttribute('aria-busy', 'false');
-    element('result-content').replaceChildren();
-    exportText = '';
-  }
-
-  function empty() { reset(); element('empty-state').hidden = false; element('result-title').textContent = 'Room for understanding'; }
-  function loading() { reset(); element('loading-state').hidden = false; element('result-panel').setAttribute('aria-busy', 'true'); element('result-title').textContent = 'Finding the useful parts'; }
-  function error(message) { reset(); element('error-state').textContent = message; element('error-state').hidden = false; element('result-title').textContent = 'Let’s try that again'; }
-
-  function show(data, mode) {
+  function normalize(data) {
+    if (typeof data.reply === 'string' && data.reply.trim()) return data.reply;
     const sections = [];
-    const add = (title, value, kind = 'text') => {
-      if (typeof value === 'string' && value.trim()) sections.push({ title, value, kind });
-      else if (Array.isArray(value)) {
-        const entries = value.filter((item) => typeof item === 'string' && item.trim());
-        if (entries.length) sections.push({ title, value: entries, kind: 'list' });
+    for (const [key, label] of Object.entries({ summary: 'Summary', purpose: 'Purpose', explanation: 'Explanation', key_points: 'Key points', findings: 'Findings', suggestions: 'Suggestions', tests: 'Suggested tests', warnings: 'Warnings', source_ids: 'Source references', revised_code: 'Proposed code' })) {
+      const value = data[key];
+      if (typeof value === 'string' && value.trim()) sections.push(`${label}\n${value}`);
+      if (Array.isArray(value)) {
+        const lines = value.map((item) => typeof item === 'string' ? item : item && typeof item === 'object' ? [item.source, item.severity, Number.isInteger(item.line) ? `Line ${item.line}` : '', item.title, item.message, item.suggestion].filter((part) => typeof part === 'string' && part).join(' — ') : '').filter(Boolean);
+        if (lines.length) sections.push(`${label}\n${lines.map((line) => `• ${line}`).join('\n')}`);
       }
-    };
-    if (mode === 'document') {
-      if (typeof data.summary !== 'string' || !data.summary.trim()) throw new Error('The backend response is missing a document summary.');
-      add('Summary', data.summary);
-      add('Key points', data.key_points);
-      add('Limitations', data.limitations);
-      add('Source references', data.source_ids);
-    } else {
-      if (![data.explanation, data.purpose].some((value) => typeof value === 'string' && value.trim())) throw new Error('The backend response is missing a code explanation.');
-      add('Purpose', data.purpose);
-      add('How it works', data.explanation);
-      if (Array.isArray(data.findings)) {
-        add('Findings', data.findings.map((finding) => {
-          if (typeof finding === 'string') return finding;
-          if (!finding || typeof finding !== 'object') return '';
-          const location = Number.isInteger(finding.line) ? `Line ${finding.line}` : '';
-          return [finding.source, finding.severity, location, finding.title, finding.message, finding.suggestion].filter((item) => typeof item === 'string' && item.trim()).join(' — ');
-        }));
-      }
-      add('Suggestions', data.suggestions);
-      add('Suggested tests', data.tests);
-      add('Proposed revision', data.revised_code, 'code');
     }
-    add('Warnings', data.warnings);
-    reset();
-    exportMode = mode;
-    const content = element('result-content');
-    sections.forEach(({ title, value, kind }) => {
-      const heading = document.createElement('h3');
-      heading.textContent = title;
-      content.append(heading);
-      const block = document.createElement(kind === 'list' ? 'ul' : kind === 'code' ? 'pre' : 'p');
-      if (kind === 'list') value.forEach((item) => { const li = document.createElement('li'); li.textContent = item; block.append(li); });
-      else block.textContent = value;
-      content.append(block);
-    });
-    exportText = sections.map(({ title, value }) => `${title}\n${Array.isArray(value) ? value.map((item) => `- ${item}`).join('\n') : value}`).join('\n\n');
-    ['result-content', 'result-actions', 'result-note', 'result-badge'].forEach((id) => { element(id).hidden = false; });
-    element('result-title').textContent = mode === 'document' ? 'Your document, distilled' : 'Your code, explained';
+    if (!sections.length) throw new Error('The backend returned no usable answer. Check its response format.');
+    return sections.join('\n\n');
   }
-
-  async function copy() {
-    if (!exportText) return;
-    if (!navigator.clipboard?.writeText) throw new Error('Clipboard access is unavailable. Use Download .txt instead.');
-    await navigator.clipboard.writeText(exportText);
+  function download(text) {
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+    const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'docode-response.txt'; document.body.append(anchor); anchor.click(); anchor.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
-
-  function download() {
-    if (!exportText) return;
-    const url = URL.createObjectURL(new Blob([exportText], { type: 'text/plain;charset=utf-8' }));
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `docode-${exportMode}-result.txt`;
-    document.body.append(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  function render(message, notify) {
+    const article = document.createElement('article'); article.className = `message ${message.role}`;
+    article.setAttribute('aria-label', message.role === 'user' ? 'Your message' : message.role === 'error' ? 'Request error' : 'Docode response');
+    if (message.role === 'assistant') {
+      const label = document.createElement('div'); label.className = 'assistant-label';
+      const logo = document.createElement('img'); logo.src = 'assets/logo.svg'; logo.alt = ''; label.append(logo, 'Docode'); article.append(label);
+    }
+    (message.files || []).forEach((file) => { const label = document.createElement('span'); label.className = 'message-attachment'; label.textContent = `Attachment: ${file.name}`; article.append(label); });
+    const content = document.createElement('div'); content.className = 'message-text'; content.textContent = message.content; article.append(content);
+    if (message.role === 'assistant') {
+      const actions = document.createElement('div'); actions.className = 'message-actions';
+      const copy = document.createElement('button'); copy.textContent = 'Copy'; copy.addEventListener('click', async () => { try { await navigator.clipboard.writeText(message.content); notify('Copied to clipboard.'); } catch { notify('Clipboard unavailable. Use Download instead.'); } });
+      const save = document.createElement('button'); save.textContent = 'Download'; save.addEventListener('click', () => download(message.content)); actions.append(copy, save); article.append(actions);
+    }
+    return article;
   }
-
-  return { empty, loading, error, show, copy, download };
+  return { normalize, render };
 })();

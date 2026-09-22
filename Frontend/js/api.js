@@ -1,61 +1,43 @@
-/* Expected backend contract (same origin):
- * POST /api/documents/summarize: multipart file, summary_length, summary_style
- * POST /api/text/summarize: JSON text, summary_length, summary_style
- * POST /api/code/analyze: JSON code, explanation_level, expected_behavior
- * Responses: JSON objects; supported result fields are documented in results.js.
- * The backend must independently enforce input limits and validate uploads.
+/* Same-origin backend contracts: frontend/README.md.
+ * Authentication uses HttpOnly session cookies, never locally stored tokens.
  */
 window.DocodeAPI = (() => {
-  const TIMEOUT_MS = 180000;
-
-  async function request(path, options, signal) {
-    if (!/^https?:$/.test(window.location.protocol)) {
-      throw new Error('To generate results, serve this frontend over HTTP with the Python backend. Opening index.html directly only previews the interface.');
-    }
+  async function request(path, options = {}, signal, timeout = 180000) {
+    if (!/^https?:$/.test(location.protocol)) throw new Error('This is a frontend preview. Serve it with the Python backend over HTTP to use chat or accounts.');
     const controller = new AbortController();
     let timedOut = false;
     const abort = () => controller.abort();
     if (signal?.aborted) abort();
     signal?.addEventListener('abort', abort, { once: true });
-    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, TIMEOUT_MS);
+    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeout);
     try {
-      const response = await fetch(`/api${path}`, { ...options, signal: controller.signal });
+      const response = await fetch(`/api${path}`, { ...options, credentials: 'same-origin', signal: controller.signal });
       if (!response.ok) {
-        if (response.status === 404 || response.status === 405) throw new Error('The analysis API is not available. Connect the Python backend with the /api routes described in frontend/js/api.js.');
-        if (response.status === 413) throw new Error('The backend rejected the input size. Try a smaller file or shorter text.');
-        if (response.status === 429) throw new Error('The service is busy. Wait a moment and try again.');
-        if (response.status >= 500) throw new Error('The backend could not complete this request. Check that the AI service is running, then try again.');
-        throw new Error(`The request could not be processed (HTTP ${response.status}). Check your input and try again.`);
+        const messages = { 401: path === '/auth/login' ? 'The email or password was not accepted.' : 'Please log in to continue.', 403: 'This request is not permitted. Refresh the page and try again.', 404: 'The Python API is not connected yet. This frontend needs the backend routes listed in frontend/README.md.', 405: 'This server only serves the frontend. Connect the Python API to enable this action.', 409: 'An account with this email may already exist. Try logging in.', 413: 'The upload is too large for the backend.', 422: 'The backend could not accept this input. Check the files and fields, then try again.', 429: 'Too many requests. Wait a moment and try again.' };
+        const error = new Error(messages[response.status] || 'The service could not complete this request. Check the backend and try again.');
+        error.status = response.status; throw error;
       }
-      if (!response.headers.get('content-type')?.includes('application/json')) throw new Error('The server did not return JSON. Check that the Python API is connected at /api.');
+      if (response.status === 204) return {};
+      if (!response.headers.get('content-type')?.includes('application/json')) throw new Error('The backend did not return JSON. Check the API configuration.');
       const data = await response.json();
-      if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('The backend returned an unexpected result format.');
+      if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('The backend returned an invalid response.');
       return data;
     } catch (error) {
-      if (timedOut) throw new Error('The request took longer than three minutes. Try a shorter input or check the backend.');
-      if (error.name === 'AbortError') throw error;
-      if (error instanceof TypeError) throw new Error('Could not connect to the backend. Check that the Python server is running and try again.');
-      if (error instanceof SyntaxError) throw new Error('The backend returned invalid JSON. Check the backend response.');
+      if (timedOut) throw new Error('The request timed out. Try a shorter input or check the backend.');
+      if (error instanceof TypeError) throw new Error('Could not reach the Python backend. Check your connection and server.');
+      if (error instanceof SyntaxError) throw new Error('The backend returned invalid JSON.');
       throw error;
-    } finally {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', abort);
-    }
+    } finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); }
   }
-
-  const json = (path, data, signal) => request(path, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
-  }, signal);
-
+  const json = (path, data) => request(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }, undefined, 20000);
   return {
-    summarize({ file, text, length, style }, signal) {
-      if (!file) return json('/text/summarize', { text, summary_length: length, summary_style: style }, signal);
+    chat({ mode, message, files, history, conversationId }, signal) {
       const body = new FormData();
-      body.append('file', file);
-      body.append('summary_length', length);
-      body.append('summary_style', style);
-      return request('/documents/summarize', { method: 'POST', body }, signal);
+      body.append('mode', mode); body.append('message', message); body.append('history', JSON.stringify(history)); body.append('conversation_id', conversationId);
+      files.forEach((file) => body.append('files', file));
+      return request('/chat', { method: 'POST', body }, signal);
     },
-    analyze(data, signal) { return json('/code/analyze', data, signal); },
+    session: () => request('/auth/session', {}, undefined, 10000),
+    login: (data) => json('/auth/login', data), signup: (data) => json('/auth/signup', data), logout: () => json('/auth/logout', {}),
   };
 })();
