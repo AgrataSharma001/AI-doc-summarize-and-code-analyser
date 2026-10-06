@@ -31,4 +31,4 @@ Every card has one accountable lead even when another person helps. A reviews sc
 
 ## Next board after Phase 0
 
-**P1-01: FastAPI + SQLite skeleton** is complete. `/api/auth/session`, `/health`, and `Frontend/` respond from the same origin; `tests/test_backend_scaffold.py` passes. The next card is **P1-02: account tables, migrations, and real signup/login/session/logout**, owned by B. The model spike continues independently on the demo laptop.
+**P1-01: FastAPI + SQLite skeleton** is complete. `/api/auth/session`, `/health`, and `Frontend/` respond from the same origin. **P1-02: account tables, migrations, and real signup/login/session/logout** is complete and covered by authentication and migration tests. The next card is **P1-03: `/api/chat` multipart intake, file limits, and conversation ownership**, owned by B. The model spike continues independently on the demo laptop.
