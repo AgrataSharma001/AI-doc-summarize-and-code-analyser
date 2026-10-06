@@ -31,4 +31,4 @@ Every card has one accountable lead even when another person helps. A reviews sc
 
 ## Next board after Phase 0
 
-The first Phase 1 card is **P1-01: FastAPI + SQLite skeleton**, owned by B, accepted when `/api/auth/session` and `/health` respond from the same origin as `Frontend/`. Start it after the API contract review; the model spike can continue independently on the demo laptop.
+**P1-01: FastAPI + SQLite skeleton** is complete. `/api/auth/session`, `/health`, and `Frontend/` respond from the same origin; `tests/test_backend_scaffold.py` passes. The next card is **P1-02: account tables, migrations, and real signup/login/session/logout**, owned by B. The model spike continues independently on the demo laptop.
