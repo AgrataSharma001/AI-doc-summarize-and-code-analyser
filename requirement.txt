@@ -1,0 +1,26 @@
+# Planned backend dependencies. Install when the FastAPI backend is added.
+# Pin exact versions in a lock file before the first deployment.
+
+# API and configuration
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic-settings
+
+# Persistence, migrations, and password hashing
+SQLAlchemy
+psycopg[binary]
+alembic
+argon2-cffi
+
+# Document extraction
+pypdf
+python-docx
+
+# Hosted model provider adapter
+openai
+
+# Quality and static analysis
+ruff
+pytest
+httpx
