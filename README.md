@@ -4,7 +4,7 @@ A B.Tech Computer Science team project for understanding documents and source co
 
 ## Current status
 
-The repository has a working **frontend preview** in `Frontend/`. It has no connected authentication server, file-processing backend, or AI service yet. `requirement.txt` lists **planned Python dependencies**; installing them does not make the application runnable. The implementation sequence is in [PHASE_WISE_DEVELOPMENT.md](PHASE_WISE_DEVELOPMENT.md), and the full schedule and risk model are in [PROJECT_PLAN.md](PROJECT_PLAN.md).
+The repository has a working **frontend preview** in `Frontend/`. It has no connected authentication server, file-processing backend, or AI service yet. `requirement.txt` lists **planned Python dependencies**; installing them does not make the application runnable. The implementation sequence is in [PHASE_WISE_DEVELOPMENT.md](PHASE_WISE_DEVELOPMENT.md), and the full schedule and risk model are in [PROJECT_PLAN.md](PROJECT_PLAN.md). Phase 0 work is tracked in [the local board](docs/phase0/WORK_BOARD.md).
 
 ## MVP scope
 
@@ -27,7 +27,7 @@ Browser (existing HTML/CSS/JavaScript)
   -> authentication + upload validation
   -> PDF/DOCX/text extraction or Python AST inspection
   -> team-built agent: route -> select source spans -> call LLM -> validate answer
-  -> PostgreSQL for users, sessions, conversations, and source spans
+  -> SQLite for users, sessions, conversations, and source spans
 ```
 
 Our **own agent** is the Python control flow around a replaceable language model. It selects the appropriate workflow and evidence, requests a structured answer, checks cited source locations, and performs at most one retry for malformed output. It has read-only analysis tools and no tool that runs uploaded code. Training a foundation model is outside the project scope.
@@ -38,11 +38,11 @@ Our **own agent** is the Python control flow around a replaceable language model
 |---|---|
 | Frontend | Existing HTML, CSS, vanilla JavaScript |
 | Backend | Python, FastAPI, Pydantic |
-| Storage | PostgreSQL, SQLAlchemy, Alembic migrations |
+| Storage | SQLite, SQLAlchemy, Alembic migrations |
 | Parsing | pypdf, python-docx, Python standard library |
 | Python code analysis | `ast` and Ruff static checks |
-| AI | Hosted LLM through a server-side provider adapter; select provider/model after a small evaluation |
-| Testing and deployment | pytest, existing frontend smoke test, Docker, GitHub Actions, managed container and database |
+| AI | Ollama on the team laptop, starting with Qwen3 1.7B; compare with Qwen3 4B if memory permits |
+| Testing and deployment | pytest, existing frontend smoke test, GitHub Actions, team-hosted localhost demo |
 
 Dependencies are listed in [requirement.txt](requirement.txt). Pin exact versions and record the tested Python version when the first backend implementation is added.
 
@@ -82,11 +82,11 @@ This test does not verify a real backend or model. See the test file header for 
 - `GET /api/auth/session`: returns the current user or `null`.
 - `POST /api/auth/signup`, `/api/auth/login`, `/api/auth/logout`: manage an HttpOnly server session.
 
-Serve the frontend and API from the same origin. The server must enforce file limits and conversation ownership; it must not trust browser-provided history or filenames. Model keys stay on the server.
+Serve the frontend and API from the same origin. The server must enforce file limits and conversation ownership; it must not trust browser-provided history or filenames. Keep the local model endpoint bound to loopback and accessible only through the backend.
 
 ## Delivery plan
 
-The working assumption is **four students over 12 weeks**, with 384 planned person-hours and a 96-hour reserve. The critical sequence is API/auth and extraction, source mapping, agent implementation, integration, evaluation, then deployment. See [PHASE_WISE_DEVELOPMENT.md](PHASE_WISE_DEVELOPMENT.md) for phase-by-phase tasks and acceptance checks.
+The working assumption is **four students over 12 weeks**, with 360 planned person-hours and a 120-hour reserve. The budget is **₹0** for inference and hosting, the available laptop has **8 GB RAM or less**, and server-held uploads/context expire after **24 hours**. The critical sequence is API/auth and extraction, source mapping, agent implementation, integration, evaluation, then deployment. See [PHASE_WISE_DEVELOPMENT.md](PHASE_WISE_DEVELOPMENT.md) for phase-by-phase tasks and acceptance checks.
 
 ## Responsible use
 

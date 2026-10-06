@@ -7,9 +7,8 @@ uvicorn[standard]
 python-multipart
 pydantic-settings
 
-# Persistence, migrations, and password hashing
+# Persistence, migrations, and password hashing (SQLite uses the standard library)
 SQLAlchemy
-psycopg[binary]
 alembic
 argon2-cffi
 
@@ -17,8 +16,8 @@ argon2-cffi
 pypdf
 python-docx
 
-# Hosted model provider adapter
-openai
+# Local model server adapter uses HTTP through httpx (listed below).
+# Runtime/model binary is installed separately after the hardware spike.
 
 # Quality and static analysis
 ruff
