@@ -4,7 +4,7 @@ A B.Tech Computer Science team project for understanding documents and source co
 
 ## Current status
 
-The repository has a working **frontend preview** in `Frontend/` and a **FastAPI foundation** in `backend/`. The backend currently serves the frontend, checks SQLite health, and returns a guest session. Signup, login, uploads, and AI replies are not implemented yet. `requirement.txt` includes dependencies for this foundation and later phases. The implementation sequence is in [PHASE_WISE_DEVELOPMENT.md](PHASE_WISE_DEVELOPMENT.md), and the full schedule and risk model are in [PROJECT_PLAN.md](PROJECT_PLAN.md). Phase 0 work is tracked in [the local board](docs/phase0/WORK_BOARD.md).
+The repository has a working **frontend** in `Frontend/` and a **FastAPI backend** in `backend/`. The backend serves the frontend, checks SQLite health, and supports signup, login, session lookup, and logout. Uploads and AI replies are not implemented yet. `requirement.txt` includes dependencies for this foundation and later phases. The implementation sequence is in [PHASE_WISE_DEVELOPMENT.md](PHASE_WISE_DEVELOPMENT.md), and the full schedule and risk model are in [PROJECT_PLAN.md](PROJECT_PLAN.md). Phase 0 work is tracked in [the local board](docs/phase0/WORK_BOARD.md).
 
 ## MVP scope
 
@@ -44,23 +44,23 @@ Our **own agent** is the Python control flow around a replaceable language model
 | AI | Ollama on the team laptop, starting with Qwen3 1.7B; compare with Qwen3 4B if memory permits |
 | Testing and deployment | pytest, existing frontend smoke test, GitHub Actions, team-hosted localhost demo |
 
-Dependencies are listed in [requirement.txt](requirement.txt). Pin exact versions and record the tested Python version when the first backend implementation is added.
+Dependencies are listed in [requirement.txt](requirement.txt). Pin exact tested versions before the final demo release.
 
 ## Repository map
 
 ```text
 Frontend/                  Existing static interface and frontend smoke test
-backend/                   FastAPI and SQLite foundation
-tests/                     Backend scaffold tests
+backend/                   FastAPI, SQLite models, auth, and Alembic migrations
+tests/                     Backend and migration tests
 README.md                  Project overview and current status
 requirement.txt             Planned Python dependencies
 PHASE_WISE_DEVELOPMENT.md   Phase tasks, owners, and exit criteria
 PROJECT_PLAN.md             Full architecture, timeline, measures, and risks
 ```
 
-The planned backend, migration, and API test directories will be added during development.
+The upload, extraction, agent, and additional integration modules will be added in later phases.
 
-## Run the current scaffold locally
+## Run the current backend locally
 
 From the repository root, with Python installed:
 
@@ -70,12 +70,12 @@ py -m venv .venv
 .\.venv\Scripts\python.exe -m uvicorn backend.main:app --reload
 ```
 
-Open `http://127.0.0.1:8000/`. `GET /health` checks the SQLite connection and `GET /api/auth/session` returns `{"user":null}`. Login and AI requests require the next backend tasks. The frontend's expected endpoints and payloads are documented in [Frontend/README.md](Frontend/README.md).
+Open `http://127.0.0.1:8000/`. The initial Alembic migration runs on startup. `GET /health` checks the SQLite connection; signup, login, session lookup, and logout now work through the frontend. Upload and AI requests still need the next backend tasks. The frontend's expected endpoints and payloads are documented in [Frontend/README.md](Frontend/README.md).
 
-Run the backend scaffold test with:
+Run backend tests with:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests/test_backend_scaffold.py -q
+.\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
 The existing browser smoke test mocks API responses and requires Node.js and Playwright:
@@ -86,11 +86,11 @@ node Frontend/tests/smoke.cjs
 
 This test does not verify a real backend or model. See the test file header for browser setup options.
 
-## Proposed API contract
+## API contract
 
-- `POST /api/chat`: multipart `mode`, `message`, `conversation_id`, `history`, and repeated `files`; responds with JSON containing `reply` or structured results.
+- Planned `POST /api/chat`: multipart `mode`, `message`, `conversation_id`, `history`, and repeated `files`; responds with JSON containing `reply` or structured results.
 - `GET /api/auth/session`: returns the current user or `null`.
-- `POST /api/auth/signup`, `/api/auth/login`, `/api/auth/logout`: manage an HttpOnly server session.
+- `POST /api/auth/signup`, `/api/auth/login`, `/api/auth/logout`: manage an HttpOnly server session backed by SQLite. Same-origin `Origin` or `Referer` is required for these POST requests.
 
 Serve the frontend and API from the same origin. The server must enforce file limits and conversation ownership; it must not trust browser-provided history or filenames. Keep the local model endpoint bound to loopback and accessible only through the backend.
 

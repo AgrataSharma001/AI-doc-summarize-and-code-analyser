@@ -19,8 +19,8 @@ This is the execution checklist for the [project plan](PROJECT_PLAN.md). It assu
 **Lead:** B. **Support:** A for frontend wiring, D for a basic model adapter. **Depends on:** phase 0 API and model decisions.
 
 - [x] Create FastAPI application, settings, health endpoint, and local SQLite configuration. The Ollama HTTP adapter remains a separate agent task.
-- [ ] Define user, session, conversation, source-file, source-span, and result tables; add Alembic migrations.
-- [ ] Implement `/api/auth/session`, `/api/auth/signup`, `/api/auth/login`, and `/api/auth/logout` with Argon2 password hashes, server sessions, secure cookie settings, and ownership checks.
+- [x] Define user, session, conversation, source-file, source-span, and result tables; add the initial Alembic migration.
+- [x] Implement `/api/auth/session`, `/api/auth/signup`, `/api/auth/login`, and `/api/auth/logout` with Argon2 password hashes, server sessions, same-origin checks, rate limits, and configurable secure cookies. Conversation ownership checks follow with `/api/chat`.
 - [ ] Implement `/api/chat` multipart parsing with server-side file count/size/type checks and clear 4xx errors.
 - [ ] Add TXT and pasted-text intake plus one simple document answer through the model adapter.
 - [ ] Connect the current frontend to these endpoints; test a real signup -> upload -> reply -> logout path.
