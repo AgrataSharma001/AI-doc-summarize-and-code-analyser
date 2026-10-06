@@ -4,7 +4,7 @@ A B.Tech Computer Science team project for understanding documents and source co
 
 ## Current status
 
-The repository has a working **frontend preview** in `Frontend/`. It has no connected authentication server, file-processing backend, or AI service yet. `requirement.txt` lists **planned Python dependencies**; installing them does not make the application runnable. The implementation sequence is in [PHASE_WISE_DEVELOPMENT.md](PHASE_WISE_DEVELOPMENT.md), and the full schedule and risk model are in [PROJECT_PLAN.md](PROJECT_PLAN.md). Phase 0 work is tracked in [the local board](docs/phase0/WORK_BOARD.md).
+The repository has a working **frontend preview** in `Frontend/` and a **FastAPI foundation** in `backend/`. The backend currently serves the frontend, checks SQLite health, and returns a guest session. Signup, login, uploads, and AI replies are not implemented yet. `requirement.txt` includes dependencies for this foundation and later phases. The implementation sequence is in [PHASE_WISE_DEVELOPMENT.md](PHASE_WISE_DEVELOPMENT.md), and the full schedule and risk model are in [PROJECT_PLAN.md](PROJECT_PLAN.md). Phase 0 work is tracked in [the local board](docs/phase0/WORK_BOARD.md).
 
 ## MVP scope
 
@@ -50,6 +50,8 @@ Dependencies are listed in [requirement.txt](requirement.txt). Pin exact version
 
 ```text
 Frontend/                  Existing static interface and frontend smoke test
+backend/                   FastAPI and SQLite foundation
+tests/                     Backend scaffold tests
 README.md                  Project overview and current status
 requirement.txt             Planned Python dependencies
 PHASE_WISE_DEVELOPMENT.md   Phase tasks, owners, and exit criteria
@@ -58,15 +60,23 @@ PROJECT_PLAN.md             Full architecture, timeline, measures, and risks
 
 The planned backend, migration, and API test directories will be added during development.
 
-## Preview the current frontend
+## Run the current scaffold locally
 
-From the repository root:
+From the repository root, with Python installed:
 
 ```powershell
-python -m http.server 8000 --directory Frontend
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirement.txt
+.\.venv\Scripts\python.exe -m uvicorn backend.main:app --reload
 ```
 
-Open `http://localhost:8000/index.html`. This previews the interface; login and AI requests require the future backend. The frontend's expected endpoints and payloads are documented in [Frontend/README.md](Frontend/README.md).
+Open `http://127.0.0.1:8000/`. `GET /health` checks the SQLite connection and `GET /api/auth/session` returns `{"user":null}`. Login and AI requests require the next backend tasks. The frontend's expected endpoints and payloads are documented in [Frontend/README.md](Frontend/README.md).
+
+Run the backend scaffold test with:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_backend_scaffold.py -q
+```
 
 The existing browser smoke test mocks API responses and requires Node.js and Playwright:
 

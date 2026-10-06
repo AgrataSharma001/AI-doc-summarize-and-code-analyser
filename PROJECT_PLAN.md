@@ -3,7 +3,7 @@
 ## Planning assumptions and current baseline
 
 - Team: four B.Tech Computer Science students, about 10 hours per person per week, for 12 weeks. Capacity is **480 person-hours**; plan **360 hours** of work and hold **120 hours (25%)** for risk and rework. The reserve was increased after the ₹0/8 GB local-model constraint was confirmed.
-- The repository contains a static HTML/CSS/JavaScript frontend. `Frontend/README.md` defines the same-origin chat and authentication API. There is no working backend or populated dependency manifest yet.
+- The repository contains a static HTML/CSS/JavaScript frontend and a FastAPI/SQLite scaffold. `Frontend/README.md` defines the same-origin chat and authentication API. The scaffold serves the UI, `/health`, and a guest session response; authentication, uploads, and AI replies remain to be built.
 - “Build our own agent” means implement our own bounded orchestration, tools, state, validation, and evaluation around a replaceable LLM. Training a foundation model is outside the semester scope.
 - Confirmed constraints: ₹0 for model inference and hosting; localhost demo on an existing laptop with 8 GB RAM or less; uploaded content and server-held context expire after 24 hours.
 

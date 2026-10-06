@@ -1,4 +1,4 @@
-# Planned backend dependencies. Install when the FastAPI backend is added.
+# Backend foundation and later-phase dependencies.
 # Pin exact versions in a lock file before the first deployment.
 
 # API and configuration
