@@ -18,11 +18,11 @@ This is the execution checklist for the [project plan](PROJECT_PLAN.md). It assu
 
 **Lead:** B. **Support:** A for frontend wiring, D for a basic model adapter. **Depends on:** phase 0 API and model decisions.
 
-- [x] Create FastAPI application, settings, health endpoint, and local SQLite configuration. The Ollama HTTP adapter remains a separate agent task.
+- [x] Create FastAPI application, settings, health endpoint, and local SQLite configuration; a configurable Ollama HTTP adapter is now implemented.
 - [x] Define user, session, conversation, source-file, source-span, and result tables; add the initial Alembic migration.
 - [x] Implement `/api/auth/session`, `/api/auth/signup`, `/api/auth/login`, and `/api/auth/logout` with Argon2 password hashes, server sessions, same-origin checks, rate limits, and configurable secure cookies. Conversation ownership checks follow with `/api/chat`.
-- [x] Implement `/api/chat` multipart parsing with server-side file count/size/type checks and clear 4xx errors. Intake requires login, same-origin requests, and conversation ownership; responses acknowledge validation only, pending extraction/model integration.
-- [ ] Add TXT and pasted-text intake plus one simple document answer through the model adapter.
+- [x] Implement `/api/chat` multipart parsing with server-side file count/size/type checks and clear 4xx errors. Intake requires login, same-origin requests, and conversation ownership.
+- [x] Add TXT and pasted-text intake plus one simple document answer through the model adapter. UTF-8 TXT/Markdown/Python extraction, source references, retained follow-up context, expiry cleanup, bounded model calls, and error handling are covered by API/adapter tests with mocked Ollama responses. A live model run is still pending.
 - [ ] Connect the current frontend to these endpoints; test a real signup -> upload -> reply -> logout path.
 
 **Exit:** A local same-origin vertical slice works. A user cannot read another user's conversation. Secrets stay in server configuration. This milestone precedes full document and code analysis.
@@ -36,7 +36,7 @@ This is the execution checklist for the [project plan](PROJECT_PLAN.md). It assu
 - [ ] Save stable source IDs, page/section locations, and original ordering for every extractable span.
 - [ ] Detect empty/image-only PDFs, corrupted files, oversized extracted text, and unsupported types; return actionable errors.
 - [ ] Chunk long documents by structure; evaluate retrieval by checking that known answer spans are selected.
-- [ ] Disable image uploads in the frontend until OCR/vision is implemented.
+- [x] Disable image uploads in the frontend until OCR/vision is implemented. The current picker also excludes PDF/DOCX until extraction is ready.
 
 **Exit:** A test corpus extracts with resolvable references; an image-only PDF is reported as unsupported rather than summarized as empty text.
 

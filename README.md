@@ -4,7 +4,7 @@ A B.Tech Computer Science team project for understanding documents and source co
 
 ## Current status
 
-The repository has a working **frontend** in `Frontend/` and a **FastAPI backend** in `backend/`. The backend serves the frontend, checks SQLite health, and supports signup, login, session lookup, and logout. `/api/chat` validates multipart input and uploads, enforces conversation ownership and expiry, and returns an intake acknowledgement. It stores file metadata only; source extraction, retained source context, and AI replies are still pending. `requirement.txt` includes dependencies for this foundation and later phases. The implementation sequence is in [PHASE_WISE_DEVELOPMENT.md](PHASE_WISE_DEVELOPMENT.md), and the full schedule and risk model are in [PROJECT_PLAN.md](PROJECT_PLAN.md). Phase 0 work is tracked in [the local board](docs/phase0/WORK_BOARD.md).
+The repository has a working **frontend** in `Frontend/` and a **FastAPI backend** in `backend/`. The backend supports accounts, validated text uploads, and source-grounded answers through local Ollama. TXT, Markdown, pasted text, and Python source are stored as spans with stable IDs and line references; follow-up questions use server-held sources and successful turns. Citations are checked against the evidence supplied to the model. Conversation access expires after 24 hours, with cleanup on startup and every minute. PDF/DOCX extraction and full Python static analysis remain pending. The adapter is tested with mocked Ollama HTTP responses; live model quality and performance still require the demo-laptop run. The implementation sequence is in [PHASE_WISE_DEVELOPMENT.md](PHASE_WISE_DEVELOPMENT.md), and the full schedule and risk model are in [PROJECT_PLAN.md](PROJECT_PLAN.md).
 
 ## MVP scope
 
@@ -17,7 +17,7 @@ The repository has a working **frontend** in `Frontend/` and a **FastAPI backend
 | Follow-up | Questions answered using server-held conversation context |
 | Accounts | Signup, login, logout, and private conversation ownership |
 
-Scanned PDFs and PNG/JPG/WEBP need OCR or vision support. The current frontend accepts image files, so image upload must be disabled during integration until that support exists. Uploaded code will be inspected as text; it will not be executed.
+The current picker supports TXT/Markdown in document mode and Python in code mode. PDF/DOCX extraction comes next; images and scanned PDFs need OCR or vision support. Uploaded code is inspected as text and is never executed.
 
 ## Planned architecture
 
@@ -58,7 +58,7 @@ PHASE_WISE_DEVELOPMENT.md   Phase tasks, owners, and exit criteria
 PROJECT_PLAN.md             Full architecture, timeline, measures, and risks
 ```
 
-Extraction, agent, and additional integration modules will be added in later phases.
+`backend/sources.py` extracts and selects text spans, `backend/ollama.py` implements local model calls, and `backend/retention.py` removes expired context. Full PDF/DOCX extraction and agent/static-analysis modules follow in later phases.
 
 ## Run the current backend locally
 
@@ -70,7 +70,20 @@ py -m venv .venv
 .\.venv\Scripts\python.exe -m uvicorn backend.main:app --reload
 ```
 
-Open `http://127.0.0.1:8000/`. The initial Alembic migration runs on startup. `GET /health` checks the SQLite connection; signup, login, session lookup, and logout work through the frontend. Chat requests return a validation acknowledgement until extraction and AI answering are implemented. The frontend's expected endpoints and payloads are documented in [Frontend/README.md](Frontend/README.md).
+Open `http://127.0.0.1:8000/`. The initial Alembic migration runs on startup. `GET /health` checks SQLite, not model availability. Sign up or log in before sending chat requests. The frontend's expected endpoints and payloads are documented in [Frontend/README.md](Frontend/README.md).
+
+Install Ollama separately and prepare the candidate model:
+
+```powershell
+ollama pull qwen3:1.7b
+ollama serve
+```
+
+If Ollama is already running, use that instance. Keep its API on loopback. The backend defaults to `http://127.0.0.1:11434` and `qwen3:1.7b`; `.env.example` documents model, timeout, and context overrides. The model is a provisional candidate until the hardware benchmark is completed; no weights are downloaded by the application.
+
+Upload a UTF-8 TXT/Markdown file and ask for a summary, or paste source text into a new chat. The first message without an attachment is treated as source text and summarized (or explained in code mode). Later messages are questions about retained sources. To add pasted content to an existing conversation, begin the message with `Source:` followed by a newline. A new source is added without extending the conversation's expiry. Long sources use selected excerpts and display a coverage warning; they are not yet summarized chunk by chunk. Citation validation checks references, not factual correctness.
+
+The model adapter uses structured, non-streaming [Ollama chat requests](https://docs.ollama.com/api/chat), retries malformed output once, and returns controlled 502/503/504 errors. Failed model requests save no new input or answer, so retry with the retained browser draft/files. Only one model request runs at a time; others receive 429. Content access ends at expiry, and physical cleanup follows within the next minute while the server is running (or on its next startup). Clearing browser chat history currently does not delete server content before expiry.
 
 Run backend tests with:
 
@@ -88,7 +101,7 @@ This test does not verify a real backend or model. See the test file header for 
 
 ## API contract
 
-- `POST /api/chat`: multipart `mode`, `message`, `conversation_id`, `history`, and repeated `files`; currently returns `status: intake_accepted`, a validation-only `reply`, and file metadata. Requires an active session and same-origin `Origin` or `Referer`. Supports `.txt`, `.md`, `.pdf`, `.docx` in document mode and `.py` in code mode. Limits: five files, 10 MiB combined, 200,000 message characters, 256 KiB history, and a 12 MiB total multipart body. Text files must be UTF-8; MIME/content mismatches and corrupt PDF/DOCX files are rejected. Conversations expire after 24 hours and cannot switch mode. Browser history is validated and discarded; file contents and messages are not retained yet. Chat is limited to 20 attempts per user per minute.
+- `POST /api/chat`: multipart `mode`, `message`, `conversation_id`, `history`, and repeated `files`; returns `status: answered`, `reply` with source references, `source_ids`, `sources`, `warnings`, and new file metadata. Requires an active session and same-origin `Origin` or `Referer`. Supports `.txt`/`.md` in document mode and `.py` in code mode; PDF/DOCX currently return 415. Limits: five files, 10 MiB combined, 200,000 message/source characters, 500,000 source characters per conversation, 256 KiB browser history, and a 12 MiB multipart body. Text must be UTF-8; MIME/content mismatches are rejected. Conversations expire after 24 hours and cannot switch mode. Browser history is validated and discarded; model history comes from the database. Chat is limited to 20 attempts per user per minute.
 - `GET /api/auth/session`: returns the current user or `null`.
 - `POST /api/auth/signup`, `/api/auth/login`, `/api/auth/logout`: manage an HttpOnly server session backed by SQLite. Same-origin `Origin` or `Referer` is required for these POST requests.
 
