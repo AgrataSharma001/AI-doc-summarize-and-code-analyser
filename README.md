@@ -4,7 +4,7 @@ A B.Tech Computer Science team project for understanding documents and source co
 
 ## Current status
 
-The repository has a working **frontend** in `Frontend/` and a **FastAPI backend** in `backend/`. The backend serves the frontend, checks SQLite health, and supports signup, login, session lookup, and logout. Uploads and AI replies are not implemented yet. `requirement.txt` includes dependencies for this foundation and later phases. The implementation sequence is in [PHASE_WISE_DEVELOPMENT.md](PHASE_WISE_DEVELOPMENT.md), and the full schedule and risk model are in [PROJECT_PLAN.md](PROJECT_PLAN.md). Phase 0 work is tracked in [the local board](docs/phase0/WORK_BOARD.md).
+The repository has a working **frontend** in `Frontend/` and a **FastAPI backend** in `backend/`. The backend serves the frontend, checks SQLite health, and supports signup, login, session lookup, and logout. `/api/chat` validates multipart input and uploads, enforces conversation ownership and expiry, and returns an intake acknowledgement. It stores file metadata only; source extraction, retained source context, and AI replies are still pending. `requirement.txt` includes dependencies for this foundation and later phases. The implementation sequence is in [PHASE_WISE_DEVELOPMENT.md](PHASE_WISE_DEVELOPMENT.md), and the full schedule and risk model are in [PROJECT_PLAN.md](PROJECT_PLAN.md). Phase 0 work is tracked in [the local board](docs/phase0/WORK_BOARD.md).
 
 ## MVP scope
 
@@ -58,7 +58,7 @@ PHASE_WISE_DEVELOPMENT.md   Phase tasks, owners, and exit criteria
 PROJECT_PLAN.md             Full architecture, timeline, measures, and risks
 ```
 
-The upload, extraction, agent, and additional integration modules will be added in later phases.
+Extraction, agent, and additional integration modules will be added in later phases.
 
 ## Run the current backend locally
 
@@ -70,7 +70,7 @@ py -m venv .venv
 .\.venv\Scripts\python.exe -m uvicorn backend.main:app --reload
 ```
 
-Open `http://127.0.0.1:8000/`. The initial Alembic migration runs on startup. `GET /health` checks the SQLite connection; signup, login, session lookup, and logout now work through the frontend. Upload and AI requests still need the next backend tasks. The frontend's expected endpoints and payloads are documented in [Frontend/README.md](Frontend/README.md).
+Open `http://127.0.0.1:8000/`. The initial Alembic migration runs on startup. `GET /health` checks the SQLite connection; signup, login, session lookup, and logout work through the frontend. Chat requests return a validation acknowledgement until extraction and AI answering are implemented. The frontend's expected endpoints and payloads are documented in [Frontend/README.md](Frontend/README.md).
 
 Run backend tests with:
 
@@ -88,7 +88,7 @@ This test does not verify a real backend or model. See the test file header for 
 
 ## API contract
 
-- Planned `POST /api/chat`: multipart `mode`, `message`, `conversation_id`, `history`, and repeated `files`; responds with JSON containing `reply` or structured results.
+- `POST /api/chat`: multipart `mode`, `message`, `conversation_id`, `history`, and repeated `files`; currently returns `status: intake_accepted`, a validation-only `reply`, and file metadata. Requires an active session and same-origin `Origin` or `Referer`. Supports `.txt`, `.md`, `.pdf`, `.docx` in document mode and `.py` in code mode. Limits: five files, 10 MiB combined, 200,000 message characters, 256 KiB history, and a 12 MiB total multipart body. Text files must be UTF-8; MIME/content mismatches and corrupt PDF/DOCX files are rejected. Conversations expire after 24 hours and cannot switch mode. Browser history is validated and discarded; file contents and messages are not retained yet. Chat is limited to 20 attempts per user per minute.
 - `GET /api/auth/session`: returns the current user or `null`.
 - `POST /api/auth/signup`, `/api/auth/login`, `/api/auth/logout`: manage an HttpOnly server session backed by SQLite. Same-origin `Origin` or `Referer` is required for these POST requests.
 

@@ -99,6 +99,19 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def require_user(request: Request, session: Annotated[Session, Depends(database)]) -> User:
+    token = request.cookies.get(COOKIE_NAME)
+    record = session.get(LoginSession, _hash_token(token)) if token else None
+    if record is not None and record.expires_at <= int(time.time()):
+        session.delete(record)
+        session.commit()
+        record = None
+    user = session.get(User, record.user_id) if record is not None else None
+    if user is None:
+        raise HTTPException(status_code=401, detail="Please log in to continue.")
+    return user
+
+
 def _set_session_cookie(response: Response, token: str, request: Request) -> None:
     settings = request.app.state.settings
     response.set_cookie(

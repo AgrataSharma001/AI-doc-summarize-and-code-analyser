@@ -18,6 +18,8 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.auth import RateLimiter
 from backend.auth import router as auth_router
+from backend.chat import ChatBodyLimit
+from backend.chat import router as chat_router
 from backend.config import PROJECT_ROOT, Settings
 from backend.db import make_engine
 
@@ -41,6 +43,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.session_factory = sessionmaker(bind=engine, expire_on_commit=False)
     app.state.auth_rate_limiter = RateLimiter()
+    app.state.chat_rate_limiter = RateLimiter()
+    app.add_middleware(ChatBodyLimit)
 
     @app.exception_handler(HTTPException)
     async def api_http_error(request: Request, exc: HTTPException):
@@ -77,6 +81,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"status": "ok"}
 
     app.include_router(auth_router)
+    app.include_router(chat_router)
 
     # Register API routes before the catch-all static mount.
     app.mount("/", StaticFiles(directory=settings.frontend_dir, html=True), name="frontend")
