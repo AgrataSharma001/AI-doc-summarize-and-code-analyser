@@ -36,7 +36,8 @@ window.DocodeAPI = (() => {
   return {
     chat({ mode, message, files, history, conversationId }, signal) {
       const body = new FormData();
-      body.append('mode', mode); body.append('message', message); body.append('history', JSON.stringify(history)); body.append('conversation_id', conversationId);
+      const recentHistory = history.slice(-6).map(({ role, content, attachments }) => ({ role, content: content.slice(0, 3000), attachments: (attachments || []).slice(0, 5) }));
+      body.append('mode', mode); body.append('message', message); body.append('history', JSON.stringify(recentHistory)); body.append('conversation_id', conversationId);
       files.forEach((file) => body.append('files', file));
       return request('/chat', { method: 'POST', body }, signal);
     },
