@@ -1,6 +1,8 @@
 """FastAPI entry point. Run with: uvicorn backend.main:app --reload"""
 
-from contextlib import asynccontextmanager
+import asyncio
+import logging
+from contextlib import asynccontextmanager, suppress
 from uuid import uuid4
 
 from alembic import command
@@ -14,6 +16,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker
 
 from backend.auth import RateLimiter
@@ -22,6 +25,8 @@ from backend.chat import ChatBodyLimit
 from backend.chat import router as chat_router
 from backend.config import PROJECT_ROOT, Settings
 from backend.db import make_engine
+from backend.ollama import OllamaAdapter
+from backend.retention import purge_expired
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -34,9 +39,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         migration_config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
         command.upgrade(migration_config, "head")
         app.state.engine = engine
+        purge_expired(app.state.session_factory)
+
+        async def cleanup():
+            while True:
+                await asyncio.sleep(60)
+                try:
+                    await asyncio.to_thread(purge_expired, app.state.session_factory)
+                except SQLAlchemyError:
+                    logging.getLogger(__name__).error("Expired-context cleanup failed; will retry.")
+
+        cleanup_task = asyncio.create_task(cleanup())
         try:
             yield
         finally:
+            cleanup_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await cleanup_task
             engine.dispose()
 
     app = FastAPI(title="Docode API", version="0.1.0", lifespan=lifespan)
@@ -44,6 +63,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.session_factory = sessionmaker(bind=engine, expire_on_commit=False)
     app.state.auth_rate_limiter = RateLimiter()
     app.state.chat_rate_limiter = RateLimiter()
+    app.state.model_adapter = OllamaAdapter(settings)
+    app.state.model_busy = False
     app.add_middleware(ChatBodyLimit)
 
     @app.exception_handler(HTTPException)

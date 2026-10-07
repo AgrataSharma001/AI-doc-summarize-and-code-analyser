@@ -1,6 +1,8 @@
 import io
+import json
 import time
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -10,6 +12,7 @@ from backend.chat import MAX_BODY_BYTES, MAX_FILE_BYTES, ChatBodyLimit
 from backend.config import Settings
 from backend.main import create_app
 from backend.models import Conversation, LoginSession, SourceFile
+from backend.ollama import OllamaAdapter
 
 ORIGIN = {"Origin": "http://testserver"}
 
@@ -17,6 +20,12 @@ ORIGIN = {"Origin": "http://testserver"}
 @pytest.fixture
 def client(tmp_path):
     app = create_app(Settings(database_url=f"sqlite:///{(tmp_path / 'chat.db').as_posix()}"))
+    def model_response(request):
+        prompt = json.loads(json.loads(request.content)["messages"][1]["content"])
+        return httpx.Response(200, json={"done": True, "message": {"content": json.dumps({
+            "reply": "Answer from supplied source.", "source_ids": [prompt["source_excerpts"][0]["id"]],
+        })}})
+    app.state.model_adapter = OllamaAdapter(app.state.settings, httpx.MockTransport(model_response))
     with TestClient(app) as client:
         assert client.post("/api/auth/signup", headers=ORIGIN, json={
             "name": "Alex", "email": "alex@example.com", "password": "strong-pass-123",
@@ -33,10 +42,10 @@ def post(client, *, fields=None, files=None, headers=ORIGIN):
     return client.post("/api/chat", files=parts, headers=headers)
 
 
-def test_intake_persists_owner_and_metadata_only(client):
+def test_chat_persists_owner_and_source_text(client):
     response = post(client, files=[("../../report.txt", b"Private report", "text/plain")])
     assert response.status_code == 200
-    assert response.json()["status"] == "intake_accepted"
+    assert response.json()["status"] == "answered"
     assert response.json()["files"][0]["filename"] == "report.txt"
     assert "Private report" not in response.text
     with client.app.state.session_factory() as db:
@@ -45,7 +54,8 @@ def test_intake_persists_owner_and_metadata_only(client):
         assert conversation.expires_at - conversation.created_at == 86400
         assert len(conversation.files) == 1
         assert conversation.files[0].size_bytes == len(b"Private report")
-        assert conversation.files[0].spans == []
+        assert conversation.files[0].spans[0].content == "Private report"
+        assert conversation.files[0].spans[0].location == "lines 1-1"
     assert post(client, fields={"message": "Follow-up"}).status_code == 200
 
 
@@ -71,7 +81,7 @@ def test_cross_user_access_and_history_cannot_grant_access(client):
     assert denied.status_code == 403
     assert set(denied.json()["error"]) == {"code", "message", "request_id"}
     with client.app.state.session_factory() as db:
-        assert len(db.get(Conversation, "test-chat").files) == 0
+        assert len(db.get(Conversation, "test-chat").files) == 1
 
 
 def test_expiry_and_mode_are_enforced(client):
@@ -126,7 +136,8 @@ def test_count_size_and_transport_limits(client):
     too_many = post(client, files=files + [("six.txt", b"x", "text/plain")])
     assert too_many.status_code == 413
     assert too_many.json()["error"]["code"] == "HTTP_413"
-    assert post(client, files=[("exact.txt", b"x" * MAX_FILE_BYTES, "text/plain")]).status_code == 200
+    # The transport permits 10 MiB; extracted text now has a lower character cap.
+    assert post(client, files=[("exact.txt", b"x" * MAX_FILE_BYTES, "text/plain")]).status_code == 413
     assert post(client, files=[("large.txt", b"x" * MAX_FILE_BYTES, "text/plain"),
                                ("extra.txt", b"x", "text/plain")]).status_code == 413
     assert client.post("/api/chat", content=b"x" * (MAX_BODY_BYTES + 1), headers=ORIGIN).status_code == 413
@@ -157,7 +168,8 @@ def test_supported_files_and_file_only_input(client):
         ("report.pdf", pdf.getvalue(), "application/pdf"),
         ("report.docx", doc.getvalue(), "application/octet-stream"),
     ]:
-        assert post(client, fields={"message": ""}, files=[(name, content, mime)]).status_code == 200
+        expected = 200 if name.endswith(".md") else 415
+        assert post(client, fields={"message": ""}, files=[(name, content, mime)]).status_code == expected
     assert post(client, fields={"mode": "code", "conversation_id": "python-chat"},
                 files=[("sample.py", b"raise RuntimeError('never execute me')", "text/plain")]).status_code == 200
 

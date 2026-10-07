@@ -1,9 +1,11 @@
-"""Authenticated multipart intake. Model answering is a later milestone."""
+"""Authenticated text intake, retained evidence, and local model answering."""
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
+import logging
 import re
 import time
 import zipfile
@@ -15,6 +17,7 @@ from xml.etree import ElementTree
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from python_multipart.exceptions import MultipartParseError
+from sqlalchemy import literal_column, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.datastructures import UploadFile
@@ -22,7 +25,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import JSONResponse
 
 from backend.auth import database, require_same_origin, require_user
-from backend.models import Conversation, SourceFile, User
+from backend.models import Conversation, Result, SourceFile, User
+from backend.sources import MAX_CONVERSATION_CHARS, extract_text, select_evidence
 
 MAX_FILES = 5
 MAX_FILE_BYTES = 10 * 1024 * 1024
@@ -218,23 +222,103 @@ async def chat(
             if total > MAX_FILE_BYTES:
                 raise HTTPException(413, "Files exceed the combined 10 MiB limit.")
             name = validate_file(upload.filename or "", upload.content_type or "", content, mode)
-            validated.append(SourceFile(
+            if PurePosixPath(name).suffix.lower() in {".pdf", ".docx"}:
+                raise HTTPException(415, "PDF/DOCX extraction is not available yet. Upload TXT/Markdown or paste text.")
+            source = SourceFile(
                 id=str(uuid4()), conversation_id=conversation_id, filename=name,
                 media_type=min(MEDIA_TYPES[PurePosixPath(name).suffix.lower()]),
                 size_bytes=len(content), created_at=now,
-            ))
-        if conversation is None:
-            conversation = Conversation(id=conversation_id, user_id=user.id, mode=mode,
+            )
+            extract_text(source, content.decode("utf-8-sig"))
+            validated.append(source)
+        existing = list(conversation.files) if conversation else []
+        has_context = any(source.spans for source in existing)
+        pasted = message.removeprefix("Source:\n")
+        is_paste = bool(message.strip() and not files and (not has_context or message.startswith("Source:\n")))
+        if is_paste:
+            source = SourceFile(id=str(uuid4()), conversation_id=conversation_id,
+                filename="Pasted Python" if mode == "code" else "Pasted text", media_type="text/plain",
+                size_bytes=len(pasted.encode("utf-8")), created_at=now)
+            extract_text(source, pasted)
+            validated.append(source)
+        all_files = existing + validated
+        if sum(len(span.content) for source in all_files for span in source.spans) > MAX_CONVERSATION_CHARS:
+            raise HTTPException(413, "Conversation sources exceed 500,000 characters. Start a new conversation.")
+        default_question = "Explain the supplied Python." if mode == "code" else "Summarize the supplied text."
+        question = default_question if is_paste else (message.strip() or default_question)
+        evidence, partial = select_evidence(all_files, question, request.app.state.settings.model_context_chars)
+        if not evidence:
+            raise HTTPException(422, "No source text is available. Reattach a text file or paste content.")
+        history = []
+        if conversation:
+            results = list(reversed(session.scalars(select(Result).where(Result.conversation_id == conversation_id,
+                Result.kind.in_(["user", "assistant"])).order_by(Result.created_at.desc(), literal_column("results.rowid").desc())
+                .limit(6)).all()))
+            remaining = 2000
+            for result in reversed(results):
+                if result.kind in {"user", "assistant"} and remaining:
+                    content = result.content[:remaining]
+                    history.insert(0, {"role": result.kind, "content": content})
+                    remaining -= len(content)
+        owner_id = user.id
+        was_existing = conversation is not None
+        # Release the SQLite read transaction while the local model is running.
+        session.rollback()
+    if request.app.state.model_busy:
+        raise HTTPException(429, "The local model is busy. Try again shortly.")
+    request.app.state.model_busy = True
+    started = time.monotonic()
+    try:
+        try:
+            async with asyncio.timeout(2 * request.app.state.settings.ollama_timeout_seconds + 5):
+                answer = await request.app.state.model_adapter.answer(mode, question, evidence, history)
+        except TimeoutError as exc:
+            raise HTTPException(504, "The local model timed out. Try a shorter request.") from exc
+        conversation = session.get(Conversation, conversation_id)
+        now = int(time.time())
+        if conversation is not None:
+            if conversation.user_id != owner_id:
+                raise HTTPException(403, "Conversation access denied.")
+            if conversation.expires_at <= now:
+                session.delete(conversation)
+                session.commit()
+                raise HTTPException(410, "Conversation expired. Start a new conversation and reattach content.")
+            if conversation.mode != mode:
+                raise HTTPException(409, "Conversation changed. Retry the request.")
+        elif was_existing:
+            raise HTTPException(410, "Conversation expired. Start a new conversation and reattach content.")
+        else:
+            conversation = Conversation(id=conversation_id, user_id=owner_id, mode=mode,
                                         created_at=now, expires_at=now + RETENTION_SECONDS)
             session.add(conversation)
+        citations = [span for span in evidence if span["id"] in answer["source_ids"]]
+        references = "\n\nSources:\n" + "\n".join(
+            f"[source: {span['id']}, {span['filename']}, {span['location']}]" for span in citations)
+        warnings = ["Only selected source excerpts fit the model context; this answer may omit other sections."] if partial else []
+        if len(question) > 3000:
+            warnings.append("The request was shortened for the local model; use a shorter follow-up for specific questions.")
+        reply = answer["reply"] + references
+        if warnings:
+            reply += "\n\n" + "\n".join(warnings)
         conversation.files.extend(validated)
+        session.add_all([
+            Result(id=str(uuid4()), conversation_id=conversation_id, kind="user", content=question[:3000], created_at=now),
+            Result(id=str(uuid4()), conversation_id=conversation_id, kind="assistant", content=reply, created_at=now),
+        ])
         try:
             session.commit()
         except IntegrityError as exc:
             session.rollback()
             raise HTTPException(409, "Conversation changed. Retry the request.") from exc
+        logging.getLogger(__name__).info("Chat completed mode=%s elapsed_ms=%d sources=%d prompt_tokens=%s output_tokens=%s",
+            mode, int((time.monotonic() - started) * 1000), len(evidence),
+            answer.get("prompt_tokens"), answer.get("output_tokens"))
+    finally:
+        request.app.state.model_busy = False
     return {
-        "status": "intake_accepted", "conversation_id": conversation_id,
-        "reply": "Input validated. AI answers are not available yet. Reattach your content when analysis is enabled.",
+        "status": "answered", "conversation_id": conversation_id, "reply": reply,
+        "source_ids": answer["source_ids"],
+        "sources": [{k: span[k] for k in ("id", "file_id", "filename", "location")} for span in citations],
+        "warnings": warnings,
         "files": [{"id": f.id, "filename": f.filename, "size_bytes": f.size_bytes} for f in validated],
     }
