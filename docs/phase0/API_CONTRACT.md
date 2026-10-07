@@ -23,6 +23,8 @@ Never echo a password or password hash. Use generic invalid-login text so the AP
 
 ## Chat route
 
+**Current implementation:** Intake is implemented and returns `200` with `status: intake_accepted`, `conversation_id`, file metadata, and a `reply` explaining that AI answering is pending. This is a validation acknowledgement, not the final answer contract below. File contents, pasted content, and browser history are not retained in this step. Reattach source content when extraction/model answering becomes available. Conversations are owner-bound, mode-bound, and expire after 24 hours; expired conversations are removed when their owner next accesses them. Text uploads require UTF-8. Additional transport limits are 12 MiB per multipart body, 256 KiB for history, 200 history messages, and 20 chat attempts per user per minute.
+
 `POST /api/chat` with `multipart/form-data`:
 
 | Field | Type | Rule |
