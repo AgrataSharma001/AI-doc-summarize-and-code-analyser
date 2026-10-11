@@ -77,6 +77,16 @@ const assert = require('node:assert/strict');
     console.log('PASS: navigation, templates, attachments + instructions, safe output, download, follow-up history and reload.');
 
     await page.locator('#new-chat').click();
+    // Picker acceptance only; real parsing is exercised by API and live tests.
+    for (const [name, mimeType] of [['report.pdf', 'application/pdf'], ['report.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']]) {
+      await page.locator('#file-input').setInputFiles({ name, mimeType, buffer: Buffer.from('picker fixture') });
+      assert.equal(await page.locator('#composer-error').textContent(), '');
+      await page.getByRole('button', { name: `Remove ${name}` }).click();
+    }
+    await page.locator('#code-mode').click();
+    await page.locator('#file-input').setInputFiles({ name: 'report.pdf', mimeType: 'application/pdf', buffer: Buffer.from('picker fixture') });
+    assert.match(await page.locator('#composer-error').textContent(), /unsupported/);
+    await page.locator('#document-mode').click();
     await page.locator('#file-input').setInputFiles({ name: 'bad.exe', mimeType: 'application/octet-stream', buffer: Buffer.from('invalid') });
     assert.match(await page.locator('#composer-error').textContent(), /unsupported/);
     await page.locator('#file-input').setInputFiles({ name: 'photo.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aI1sAAAAASUVORK5CYII=', 'base64') });
