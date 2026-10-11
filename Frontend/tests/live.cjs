@@ -5,6 +5,11 @@
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
+const format = process.env.DOCODE_TEST_FORMAT || 'txt';
+assert.ok(['txt', 'pdf', 'docx'].includes(format), 'Use txt, pdf, or docx for DOCODE_TEST_FORMAT.');
+const filename = `orion.${format}`;
 
 const base = new URL(process.env.DOCODE_TEST_URL || 'http://127.0.0.1:8000');
 assert.ok(base.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname),
@@ -38,7 +43,11 @@ const source = 'Project Orion has a budget of 240 rupees.\nThe delivery deadline
     assert.ok(cookie?.httpOnly, 'Signup must establish an HttpOnly session.');
     assert.equal(await page.evaluate((secret) => JSON.stringify({ ...localStorage, ...sessionStorage }).includes(secret), password), false);
 
-    await page.locator('#file-input').setInputFiles({ name: 'orion.txt', mimeType: 'text/plain', buffer: Buffer.from(source) });
+    const buffer = format === 'txt' ? Buffer.from(source)
+      : fs.readFileSync(path.resolve(__dirname, '../../.test-tools/fixtures', filename));
+    const mimeType = { txt: 'text/plain', pdf: 'application/pdf',
+      docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }[format];
+    await page.locator('#file-input').setInputFiles({ name: filename, mimeType, buffer });
     await page.locator('#prompt').fill('Summarize the project budget, delivery deadline, and owner.');
     async function send() {
       const responsePromise = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/chat'
@@ -52,8 +61,8 @@ const source = 'Project Orion has a budget of 240 rupees.\nThe delivery deadline
       assert.ok(answer.source_ids.length > 0);
       assert.deepEqual(new Set(answer.source_ids), new Set(answer.sources.map((span) => span.id)));
       for (const span of answer.sources) {
-        assert.equal(span.filename, 'orion.txt');
-        assert.match(span.location, /line/i);
+        assert.equal(span.filename, filename);
+        assert.match(span.location, format === 'pdf' ? /^page \d+, lines/ : format === 'docx' ? /paragraph \d+, lines/ : /^lines/);
         assert.ok(answer.reply.includes(`[source: ${span.id}, ${span.filename}, ${span.location}]`));
       }
       await page.waitForFunction((reply) => [...document.querySelectorAll('.message.assistant .message-text')]
@@ -92,7 +101,7 @@ const source = 'Project Orion has a budget of 240 rupees.\nThe delivery deadline
     });
     assert.equal(denied, 401);
     assert.deepEqual(errors, []);
-    console.log('PASS: signup, text upload, cited answer, reload, retained-source follow-up, logout, and signed-out rejection.');
+    console.log(`PASS: signup, ${format.toUpperCase()} upload, cited answer, reload, retained-source follow-up, logout, and signed-out rejection.`);
   } finally {
     await browser.close();
   }

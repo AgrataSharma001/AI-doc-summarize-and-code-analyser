@@ -13,8 +13,8 @@ alembic
 argon2-cffi
 
 # Document extraction
-pypdf
-python-docx
+pypdf>=6.19
+python-docx>=1.2
 
 # Local model server adapter uses HTTP through httpx (listed below).
 # Runtime/model binary is installed separately after the hardware spike.

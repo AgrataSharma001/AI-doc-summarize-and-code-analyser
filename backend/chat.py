@@ -3,17 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import io
 import json
 import logging
 import re
 import time
-import zipfile
 from contextlib import asynccontextmanager
 from pathlib import PurePosixPath
 from typing import Annotated
 from uuid import uuid4
-from xml.etree import ElementTree
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from python_multipart.exceptions import MultipartParseError
@@ -25,6 +22,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import JSONResponse
 
 from backend.auth import database, require_same_origin, require_user
+from backend.documents import extract_document
 from backend.models import Conversation, Result, SourceFile, User
 from backend.sources import MAX_CONVERSATION_CHARS, extract_text, select_evidence
 
@@ -120,37 +118,6 @@ def validate_file(filename: str, media_type: str, content: bytes, mode: str) -> 
     elif extension == ".pdf":
         if not content.startswith(b"%PDF-"):
             raise HTTPException(415, "File contents do not match a PDF.")
-        # Extraction and image-only detection belong to the document extraction phase.
-        from pypdf import PdfReader
-
-        try:
-            pdf = PdfReader(io.BytesIO(content), strict=True)
-            if pdf.is_encrypted or not len(pdf.pages):
-                raise ValueError("Encrypted or empty PDF")
-        except Exception as exc:
-            raise HTTPException(422, "PDF is corrupt, encrypted, or has no pages.") from exc
-    else:
-        try:
-            with zipfile.ZipFile(io.BytesIO(content)) as archive:
-                entries = archive.infolist()
-                names = [entry.filename for entry in entries]
-                if (len(entries) > 1000 or len(names) != len(set(names))
-                        or sum(entry.file_size for entry in entries) > 20 * 1024 * 1024
-                        or any(entry.flag_bits & 1 for entry in entries)):
-                    raise ValueError("Unsafe archive")
-                types = archive.read("[Content_Types].xml")
-                document = archive.read("word/document.xml")
-                if b"<!DOCTYPE" in types.upper() or b"<!DOCTYPE" in document.upper():
-                    raise ValueError("Unsupported XML")
-                root = ElementTree.fromstring(types)
-                expected = "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
-                if not any(e.attrib.get("PartName") == "/word/document.xml"
-                           and e.attrib.get("ContentType") == expected for e in root):
-                    raise ValueError("Not a DOCX document")
-                if ElementTree.fromstring(document).tag != "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}document":
-                    raise ValueError("Invalid document XML")
-        except Exception as exc:
-            raise HTTPException(422, "DOCX is corrupt or unsupported.") from exc
     return name
 
 
@@ -215,6 +182,7 @@ async def chat(
             if conversation.mode != mode:
                 raise HTTPException(422, "Conversation mode cannot change.")
         validated = []
+        extraction_warnings = []
         total = 0
         for upload in files:
             content = await upload.read(MAX_FILE_BYTES - total + 1)
@@ -222,14 +190,16 @@ async def chat(
             if total > MAX_FILE_BYTES:
                 raise HTTPException(413, "Files exceed the combined 10 MiB limit.")
             name = validate_file(upload.filename or "", upload.content_type or "", content, mode)
-            if PurePosixPath(name).suffix.lower() in {".pdf", ".docx"}:
-                raise HTTPException(415, "PDF/DOCX extraction is not available yet. Upload TXT/Markdown or paste text.")
             source = SourceFile(
                 id=str(uuid4()), conversation_id=conversation_id, filename=name,
                 media_type=min(MEDIA_TYPES[PurePosixPath(name).suffix.lower()]),
                 size_bytes=len(content), created_at=now,
             )
-            extract_text(source, content.decode("utf-8-sig"))
+            extension = PurePosixPath(name).suffix.lower()
+            if extension in {".pdf", ".docx"}:
+                extraction_warnings.extend(await asyncio.to_thread(extract_document, source, content, extension))
+            else:
+                extract_text(source, content.decode("utf-8-sig"))
             validated.append(source)
         existing = list(conversation.files) if conversation else []
         has_context = any(source.spans for source in existing)
@@ -294,7 +264,9 @@ async def chat(
         citations = [span for span in evidence if span["id"] in answer["source_ids"]]
         references = "\n\nSources:\n" + "\n".join(
             f"[source: {span['id']}, {span['filename']}, {span['location']}]" for span in citations)
-        warnings = ["Only selected source excerpts fit the model context; this answer may omit other sections."] if partial else []
+        warnings = list(extraction_warnings)
+        if partial:
+            warnings.append("Only selected source excerpts fit the model context; this answer may omit other sections.")
         if len(question) > 3000:
             warnings.append("The request was shortened for the local model; use a shorter follow-up for specific questions.")
         reply = answer["reply"] + references

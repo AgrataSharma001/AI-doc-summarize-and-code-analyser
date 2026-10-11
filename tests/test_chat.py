@@ -168,7 +168,7 @@ def test_supported_files_and_file_only_input(client):
         ("report.pdf", pdf.getvalue(), "application/pdf"),
         ("report.docx", doc.getvalue(), "application/octet-stream"),
     ]:
-        expected = 200 if name.endswith(".md") else 415
+        expected = 200 if name.endswith(".md") else 422  # Empty binary documents have no source text.
         assert post(client, fields={"message": ""}, files=[(name, content, mime)]).status_code == expected
     assert post(client, fields={"mode": "code", "conversation_id": "python-chat"},
                 files=[("sample.py", b"raise RuntimeError('never execute me')", "text/plain")]).status_code == 200

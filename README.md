@@ -4,7 +4,7 @@ A B.Tech Computer Science team project for understanding documents and source co
 
 ## Current status
 
-The repository has a working **frontend** in `Frontend/` and a **FastAPI backend** in `backend/`. The backend supports accounts, validated text uploads, and source-grounded answers through local Ollama. TXT, Markdown, pasted text, and Python source are stored as spans with stable IDs and line references; follow-up questions use server-held sources and successful turns. Citations are checked against the evidence supplied to the model. Conversation access expires after 24 hours, with cleanup on startup and every minute. The live signup -> TXT upload -> cited answer -> follow-up -> logout path has passed against FastAPI and Ollama; see [P1-05 evidence](docs/phase1/LIVE_INTEGRATION.md). PDF/DOCX extraction and full Python static analysis remain pending. Broader live model quality and performance still require the demo-laptop evaluation. The implementation sequence is in [PHASE_WISE_DEVELOPMENT.md](PHASE_WISE_DEVELOPMENT.md), and the full schedule and risk model are in [PROJECT_PLAN.md](PROJECT_PLAN.md).
+The repository has a working **frontend** in `Frontend/` and a **FastAPI backend** in `backend/`. The backend supports accounts, validated text uploads, and source-grounded answers through local Ollama. TXT, Markdown, pasted text, and Python source are stored as spans with stable IDs and line references; follow-up questions use server-held sources and successful turns. Citations are checked against the evidence supplied to the model. Conversation access expires after 24 hours, with cleanup on startup and every minute. The live signup -> TXT upload -> cited answer -> follow-up -> logout path has passed against FastAPI and Ollama; see [P1-05 evidence](docs/phase1/LIVE_INTEGRATION.md). PDF/DOCX extraction now preserves PDF page/line locations and DOCX heading, paragraph, and table-cell locations. Full Python static analysis remains pending. Broader live model quality and performance still require the demo-laptop evaluation. The implementation sequence is in [PHASE_WISE_DEVELOPMENT.md](PHASE_WISE_DEVELOPMENT.md), and the full schedule and risk model are in [PROJECT_PLAN.md](PROJECT_PLAN.md).
 
 ## MVP scope
 
@@ -17,7 +17,7 @@ The repository has a working **frontend** in `Frontend/` and a **FastAPI backend
 | Follow-up | Questions answered using server-held conversation context |
 | Accounts | Signup, login, logout, and private conversation ownership |
 
-The current picker supports TXT/Markdown in document mode and Python in code mode. PDF/DOCX extraction comes next; images and scanned PDFs need OCR or vision support. Uploaded code is inspected as text and is never executed.
+The current picker supports TXT/Markdown, text-based PDF, and DOCX in document mode and Python in code mode. Images and scanned PDFs need OCR or vision support. Uploaded code is inspected as text and is never executed.
 
 ## Planned architecture
 
@@ -58,7 +58,7 @@ PHASE_WISE_DEVELOPMENT.md   Phase tasks, owners, and exit criteria
 PROJECT_PLAN.md             Full architecture, timeline, measures, and risks
 ```
 
-`backend/sources.py` extracts and selects text spans, `backend/ollama.py` implements local model calls, and `backend/retention.py` removes expired context. Full PDF/DOCX extraction and agent/static-analysis modules follow in later phases.
+`backend/sources.py` extracts and selects text spans, `backend/documents.py` extracts PDFs and DOCX, `backend/ollama.py` implements local model calls, and `backend/retention.py` removes expired context. Further agent/static-analysis modules follow in later phases.
 
 ## Run the current backend locally
 
@@ -81,7 +81,7 @@ ollama serve
 
 If Ollama is already running, use that instance. Keep its API on loopback. The backend defaults to `http://127.0.0.1:11434` and `qwen3:1.7b`; `.env.example` documents model, timeout, and context overrides. The model is a provisional candidate until the hardware benchmark is completed; no weights are downloaded by the application.
 
-Upload a UTF-8 TXT/Markdown file and ask for a summary, or paste source text into a new chat. The first message without an attachment is treated as source text and summarized (or explained in code mode). Later messages are questions about retained sources. To add pasted content to an existing conversation, begin the message with `Source:` followed by a newline. A new source is added without extending the conversation's expiry. Long sources use selected excerpts and display a coverage warning; they are not yet summarized chunk by chunk. Citation validation checks references, not factual correctness.
+Upload a UTF-8 TXT/Markdown file, text-based PDF, or DOCX and ask for a summary, or paste source text into a new chat. PDF references use page/line numbers; DOCX references use body headings, paragraph numbers, and table cells rather than rendered page numbers. Blank PDF pages are reported as omitted; image-only files need OCR. DOCX images, text boxes, headers/footers, and tracked changes may be omitted and are disclosed in the answer. The first message without an attachment is treated as source text and summarized (or explained in code mode). Later messages are questions about retained sources. To add pasted content to an existing conversation, begin the message with `Source:` followed by a newline. A new source is added without extending the conversation's expiry. Long sources use selected excerpts and display a coverage warning; they are not yet summarized chunk by chunk. Citation validation checks references, not factual correctness.
 
 The model adapter uses structured, non-streaming [Ollama chat requests](https://docs.ollama.com/api/chat), retries malformed output once, and returns controlled 502/503/504 errors. Failed model requests save no new input or answer, so retry with the retained browser draft/files. Only one model request runs at a time; others receive 429. Content access ends at expiry, and physical cleanup follows within the next minute while the server is running (or on its next startup). Clearing browser chat history currently does not delete server content before expiry.
 
@@ -101,7 +101,7 @@ This test does not verify a real backend or model. The separate `Frontend/tests/
 
 ## API contract
 
-- `POST /api/chat`: multipart `mode`, `message`, `conversation_id`, `history`, and repeated `files`; returns `status: answered`, `reply` with source references, `source_ids`, `sources`, `warnings`, and new file metadata. Requires an active session and same-origin `Origin` or `Referer`. Supports `.txt`/`.md` in document mode and `.py` in code mode; PDF/DOCX currently return 415. Limits: five files, 10 MiB combined, 200,000 message/source characters, 500,000 source characters per conversation, 256 KiB browser history, and a 12 MiB multipart body. Text must be UTF-8; MIME/content mismatches are rejected. Conversations expire after 24 hours and cannot switch mode. Browser history is validated and discarded; model history comes from the database. Chat is limited to 20 attempts per user per minute.
+- `POST /api/chat`: multipart `mode`, `message`, `conversation_id`, `history`, and repeated `files`; returns `status: answered`, `reply` with source references, `source_ids`, `sources`, `warnings`, and new file metadata. Requires an active session and same-origin `Origin` or `Referer`. Supports `.txt`/`.md`/`.pdf`/`.docx` in document mode and `.py` in code mode. PDF/DOCX errors return 422 for unreadable/empty/encrypted inputs and 413 for extraction limits. PDFs are limited to 200 pages, 4 MiB per decoded page content stream, and 20 MiB of decoded page streams in total; parser decompression limits are also enforced. DOCX packages are capped at 1,000 entries, 20 MiB expanded data, and 10,000 visited blocks, with bounded nesting and source-location length. Limits: five files, 10 MiB combined, 200,000 message/source characters, 500,000 source characters per conversation, 256 KiB browser history, and a 12 MiB multipart body. Text must be UTF-8; MIME/content mismatches are rejected. Conversations expire after 24 hours and cannot switch mode. Browser history is validated and discarded; model history comes from the database. Chat is limited to 20 attempts per user per minute.
 - `GET /api/auth/session`: returns the current user or `null`.
 - `POST /api/auth/signup`, `/api/auth/login`, `/api/auth/logout`: manage an HttpOnly server session backed by SQLite. Same-origin `Origin` or `Referer` is required for these POST requests.
 

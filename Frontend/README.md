@@ -16,11 +16,11 @@ Serve this directory and the API from the same origin. This frontend does not im
 - `message`: instructions, question, or pasted content.
 - `conversation_id`: client-generated conversation ID; the server must enforce ownership.
 - `history`: JSON array of previous `{role, content, attachments}` messages. Attachment entries contain metadata only.
-- `files`: repeated upload fields. The UI allows 5 files totaling at most 10 MiB: TXT/Markdown in document mode and Python in code mode. PDF/DOCX and images are disabled until extraction/OCR support exists. The server separately caps each extracted text source at 200,000 characters and a conversation's sources at 500,000 characters.
+- `files`: repeated upload fields. The UI allows 5 files totaling at most 10 MiB: TXT/Markdown, text-based PDF, and DOCX in document mode and Python in code mode. Images remain disabled until OCR/vision support exists. The server separately caps each extracted text source at 200,000 characters and a conversation's sources at 500,000 characters.
 
 Return `{"reply":"Your answer..."}`. Structured responses with `summary`, `explanation`, `purpose`, `key_points`, `findings`, `suggestions`, `tests`, `warnings`, `source_ids`, and `revised_code` are also accepted. Responses are rendered as plain text; generated HTML never executes.
 
-The backend retains text spans and successful turns by conversation ID for follow-up questions: prior file contents are not resent. The first message without files is treated as pasted source; later messages ask questions about stored sources. To add a pasted source later, prefix it with `Source:` followed by a newline. Replies include validated span IDs and line references as plain text. Context access expires after 24 hours; the UI displays the backend's expiry and model errors. The backend uses local Ollama, which must be installed and running separately. The frontend does not execute code. Cancellation aborts the browser request, not necessarily server-side work. Chat requests time out after 180 seconds. Failed requests keep the draft and files for retry.
+The backend retains text spans and successful turns by conversation ID for follow-up questions: prior file contents are not resent. The first message without files is treated as pasted source; later messages ask questions about stored sources. To add a pasted source later, prefix it with `Source:` followed by a newline. Replies include validated span IDs and locations as plain text: page/line numbers for PDF, heading/paragraph/table-cell references for DOCX, and line numbers for text/code. DOCX locations describe the document body and do not claim rendered page numbers. Coverage warnings disclose omitted PDF pages and unsupported DOCX content such as images, text boxes, headers/footers, and tracked changes. Context access expires after 24 hours; the UI displays the backend's expiry and model errors. The backend uses local Ollama, which must be installed and running separately. The frontend does not execute code. Cancellation aborts the browser request, not necessarily server-side work. Chat requests time out after 180 seconds. Failed requests keep the draft and files for retry.
 
 ### Authentication
 
@@ -45,7 +45,7 @@ Recent chats are local to this browser session and not synchronized across devic
 
 ## Browser verification
 
-`tests/smoke.cjs` checks UI behavior with mocked API responses. `tests/live.cjs` uses the real frontend, FastAPI, SQLite, and Ollama without intercepting requests. The live test creates a synthetic account and conversation, uploads a TXT file, checks displayed citations and simple source facts, reloads the page, asks a follow-up without reuploading, and verifies logout and signed-out rejection. It does not measure general model quality or peak RAM.
+`tests/smoke.cjs` checks UI behavior with mocked API responses. `tests/live.cjs` uses the real frontend, FastAPI, SQLite, and Ollama without intercepting requests. The live test creates a synthetic account and conversation, uploads a TXT file, checks displayed citations and simple source facts, reloads the page, asks a follow-up without reuploading, and verifies logout and signed-out rejection. It also supports synthetic PDF/DOCX fixtures via `DOCODE_TEST_FORMAT`. It does not measure general model quality or peak RAM.
 
 Install browser test dependencies from the repository root (the local directory is ignored by Git):
 
@@ -69,5 +69,18 @@ $env:DOCODE_TEST_URL = 'http://127.0.0.1:8765'
 node Frontend/tests/smoke.cjs
 node Frontend/tests/live.cjs
 ```
+
+To verify PDF/DOCX with the same synthetic budget/owner checks, generate the fixtures and run each format against that backend:
+
+```powershell
+.\.venv\Scripts\python.exe tests/document_fixtures.py
+$env:DOCODE_TEST_FORMAT = 'pdf'
+node Frontend/tests/live.cjs
+$env:DOCODE_TEST_FORMAT = 'docx'
+node Frontend/tests/live.cjs
+Remove-Item Env:DOCODE_TEST_FORMAT
+```
+
+The generated files are stored in ignored `.test-tools/fixtures/`. The PDF has three text pages; the DOCX has a heading, body paragraphs, and an owner table. Both preserve the test's expected Project Orion budget and owner. See [P2-01 evidence](../docs/phase2/DOCUMENT_EXTRACTION.md).
 
 This example uses installed Microsoft Edge. Alternatively, install Playwright Chromium with `.\.test-tools\node_modules\.bin\playwright.cmd install chromium` and remove `BROWSER_CHANNEL` from the environment. The live test accepts only a loopback HTTP URL and fails if the API/model is unavailable. Each run adds a synthetic user; conversation sources expire after 24 hours, while accounts remain in the test database. Stop the backend before removing that dedicated database. See [P1-05 evidence](../docs/phase1/LIVE_INTEGRATION.md) for the recorded run.

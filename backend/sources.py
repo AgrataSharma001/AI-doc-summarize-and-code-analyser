@@ -12,7 +12,7 @@ MAX_CONVERSATION_CHARS = 500_000
 SPAN_CHARS = 1600
 
 
-def extract_text(source: SourceFile, text: str) -> None:
+def extract_text(source: SourceFile, text: str, location_prefix: str = "") -> None:
     if len(text) > MAX_SOURCE_CHARS:
         raise HTTPException(413, "Text source exceeds 200,000 characters. Split it into smaller files.")
     if not text.strip():
@@ -29,7 +29,7 @@ def extract_text(source: SourceFile, text: str) -> None:
         content = "".join(parts)
         if content.strip():
             source.spans.append(SourceSpan(id=str(uuid4()), file_id=source.id,
-                position=len(source.spans), location=f"lines {start}-{end}", content=content))
+                position=len(source.spans), location=f"{location_prefix}lines {start}-{end}", content=content))
         parts, size = [], 0
 
     for line_number, line in enumerate(text.splitlines(keepends=True), 1):
