@@ -42,3 +42,32 @@ Switch accounts calls logout, clears the current account's browser chat history,
 - Login: email/password, password visibility, signup, account switching, and backend error feedback.
 
 Recent chats are local to this browser session and not synchronized across devices. Clearing browser history does not yet call a server deletion endpoint; server sources/results expire after 24 hours and are purged on startup/every minute. No simulated AI answers are generated when the backend or model is unavailable.
+
+## Browser verification
+
+`tests/smoke.cjs` checks UI behavior with mocked API responses. `tests/live.cjs` uses the real frontend, FastAPI, SQLite, and Ollama without intercepting requests. The live test creates a synthetic account and conversation, uploads a TXT file, checks displayed citations and simple source facts, reloads the page, asks a follow-up without reuploading, and verifies logout and signed-out rejection. It does not measure general model quality or peak RAM.
+
+Install browser test dependencies from the repository root (the local directory is ignored by Git):
+
+```powershell
+npm install --prefix .test-tools --no-package-lock --no-save playwright
+```
+
+Start Ollama with the configured model installed. In a separate terminal, start the backend against a dedicated test database:
+
+```powershell
+$env:DOCODE_DATABASE_URL = 'sqlite:///data/live-test.db'
+.\.venv\Scripts\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 8765
+```
+
+Run both tests from the repository root:
+
+```powershell
+$env:PLAYWRIGHT_MODULE = (Resolve-Path '.test-tools/node_modules/playwright').Path
+$env:BROWSER_CHANNEL = 'msedge'
+$env:DOCODE_TEST_URL = 'http://127.0.0.1:8765'
+node Frontend/tests/smoke.cjs
+node Frontend/tests/live.cjs
+```
+
+This example uses installed Microsoft Edge. Alternatively, install Playwright Chromium with `.\.test-tools\node_modules\.bin\playwright.cmd install chromium` and remove `BROWSER_CHANNEL` from the environment. The live test accepts only a loopback HTTP URL and fails if the API/model is unavailable. Each run adds a synthetic user; conversation sources expire after 24 hours, while accounts remain in the test database. Stop the backend before removing that dedicated database. See [P1-05 evidence](../docs/phase1/LIVE_INTEGRATION.md) for the recorded run.

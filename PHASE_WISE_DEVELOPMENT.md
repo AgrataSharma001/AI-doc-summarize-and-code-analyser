@@ -22,8 +22,8 @@ This is the execution checklist for the [project plan](PROJECT_PLAN.md). It assu
 - [x] Define user, session, conversation, source-file, source-span, and result tables; add the initial Alembic migration.
 - [x] Implement `/api/auth/session`, `/api/auth/signup`, `/api/auth/login`, and `/api/auth/logout` with Argon2 password hashes, server sessions, same-origin checks, rate limits, and configurable secure cookies. Conversation ownership checks follow with `/api/chat`.
 - [x] Implement `/api/chat` multipart parsing with server-side file count/size/type checks and clear 4xx errors. Intake requires login, same-origin requests, and conversation ownership.
-- [x] Add TXT and pasted-text intake plus one simple document answer through the model adapter. UTF-8 TXT/Markdown/Python extraction, source references, retained follow-up context, expiry cleanup, bounded model calls, and error handling are covered by API/adapter tests with mocked Ollama responses. A live model run is still pending.
-- [ ] Connect the current frontend to these endpoints; test a real signup -> upload -> reply -> logout path.
+- [x] Add TXT and pasted-text intake plus one simple document answer through the model adapter. UTF-8 TXT/Markdown/Python extraction, source references, retained follow-up context, expiry cleanup, bounded model calls, and error handling are covered by API/adapter tests with mocked Ollama responses. The supported TXT browser flow has also passed against the live model; see [P1-05 evidence](docs/phase1/LIVE_INTEGRATION.md).
+- [x] Connect the current frontend to these endpoints; test a real signup -> upload -> reply -> logout path. The live browser test also verifies follow-up after reload, source references, and signed-out rejection against FastAPI and Ollama; see [P1-05 evidence](docs/phase1/LIVE_INTEGRATION.md). Broader model quality and RAM profiling remain pending.
 
 **Exit:** A local same-origin vertical slice works. A user cannot read another user's conversation. Secrets stay in server configuration. This milestone precedes full document and code analysis.
 

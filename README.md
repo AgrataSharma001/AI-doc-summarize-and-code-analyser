@@ -4,7 +4,7 @@ A B.Tech Computer Science team project for understanding documents and source co
 
 ## Current status
 
-The repository has a working **frontend** in `Frontend/` and a **FastAPI backend** in `backend/`. The backend supports accounts, validated text uploads, and source-grounded answers through local Ollama. TXT, Markdown, pasted text, and Python source are stored as spans with stable IDs and line references; follow-up questions use server-held sources and successful turns. Citations are checked against the evidence supplied to the model. Conversation access expires after 24 hours, with cleanup on startup and every minute. PDF/DOCX extraction and full Python static analysis remain pending. The adapter is tested with mocked Ollama HTTP responses; live model quality and performance still require the demo-laptop run. The implementation sequence is in [PHASE_WISE_DEVELOPMENT.md](PHASE_WISE_DEVELOPMENT.md), and the full schedule and risk model are in [PROJECT_PLAN.md](PROJECT_PLAN.md).
+The repository has a working **frontend** in `Frontend/` and a **FastAPI backend** in `backend/`. The backend supports accounts, validated text uploads, and source-grounded answers through local Ollama. TXT, Markdown, pasted text, and Python source are stored as spans with stable IDs and line references; follow-up questions use server-held sources and successful turns. Citations are checked against the evidence supplied to the model. Conversation access expires after 24 hours, with cleanup on startup and every minute. The live signup -> TXT upload -> cited answer -> follow-up -> logout path has passed against FastAPI and Ollama; see [P1-05 evidence](docs/phase1/LIVE_INTEGRATION.md). PDF/DOCX extraction and full Python static analysis remain pending. Broader live model quality and performance still require the demo-laptop evaluation. The implementation sequence is in [PHASE_WISE_DEVELOPMENT.md](PHASE_WISE_DEVELOPMENT.md), and the full schedule and risk model are in [PROJECT_PLAN.md](PROJECT_PLAN.md).
 
 ## MVP scope
 
@@ -97,7 +97,7 @@ The existing browser smoke test mocks API responses and requires Node.js and Pla
 node Frontend/tests/smoke.cjs
 ```
 
-This test does not verify a real backend or model. See the test file header for browser setup options.
+This test does not verify a real backend or model. The separate `Frontend/tests/live.cjs` test verifies the real TXT workflow, retained-source follow-up, and logout. See [browser verification](Frontend/README.md#browser-verification) for setup and [recorded results](docs/phase1/LIVE_INTEGRATION.md).
 
 ## API contract
 
