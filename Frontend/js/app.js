@@ -56,13 +56,13 @@
   $('prompt').addEventListener('input', resize);
   $('prompt').addEventListener('keydown', (event) => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && !mobile.matches) { event.preventDefault(); if (!$('send-button').disabled) $('chat-form').requestSubmit(); } });
   $('attach-button').addEventListener('click', () => { const opening = $('attach-menu').hidden; closeMenus(); $('attach-menu').hidden = !opening; $('attach-button').setAttribute('aria-expanded', String(opening)); if (opening) $('attach-documents').focus(); });
-  for (const [id, accept] of Object.entries({ 'attach-documents': '.pdf,.docx,.txt', 'attach-photos': '.png,.jpg,.jpeg,.webp', 'attach-code': '.py' })) $(id).addEventListener('click', () => { $('file-input').accept = accept; closeMenus(); $('file-input').click(); });
+  for (const [id, accept] of Object.entries({ 'attach-documents': '.txt,.md', 'attach-code': '.py' })) $(id).addEventListener('click', () => { $('file-input').accept = accept; closeMenus(); $('file-input').click(); });
   function addFiles(incoming) {
     if (active) return;
     error(); const problems = [];
     for (const file of incoming) {
       const ext = file.name.split('.').pop().toLowerCase();
-      if (!['pdf','docx','txt','py','png','jpg','jpeg','webp'].includes(ext)) { problems.push(`${file.name}: unsupported file type.`); continue; }
+      if (!(mode === 'code' ? ['py'] : ['txt','md']).includes(ext)) { problems.push(`${file.name}: unsupported file type for ${mode} mode. Use ${mode === 'code' ? 'Python' : 'TXT or Markdown'}.`); continue; }
       if (!file.size) { problems.push(`${file.name}: the file is empty.`); continue; }
       if (files.some((item) => item.file.name === file.name && item.file.size === file.size && item.file.lastModified === file.lastModified)) continue;
       if (files.length >= MAX_FILES || file.size + files.reduce((sum, item) => sum + item.file.size, 0) > MAX_BYTES) { problems.push('Attach up to 5 files, with a combined size of 10 MB.'); break; }

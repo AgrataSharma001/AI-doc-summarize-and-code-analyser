@@ -14,7 +14,10 @@ window.DocodeAPI = (() => {
       const response = await fetch(`/api${path}`, { ...options, credentials: 'same-origin', signal: controller.signal });
       if (!response.ok) {
         const messages = { 401: path === '/auth/login' ? 'The email or password was not accepted.' : 'Please log in to continue.', 403: 'This request is not permitted. Refresh the page and try again.', 404: 'The Python API is not connected yet. This frontend needs the backend routes listed in frontend/README.md.', 405: 'This server only serves the frontend. Connect the Python API to enable this action.', 409: 'An account with this email may already exist. Try logging in.', 413: 'The upload is too large for the backend.', 422: 'The backend could not accept this input. Check the files and fields, then try again.', 429: 'Too many requests. Wait a moment and try again.' };
-        const error = new Error(messages[response.status] || 'The service could not complete this request. Check the backend and try again.');
+        Object.assign(messages, { 410: 'This conversation expired. Start a new chat and reattach your content.', 415: 'Use TXT or Markdown for documents, or Python files in code mode.', 502: 'The model returned an invalid answer. Please retry.', 503: 'Start local Ollama and install the configured model, then retry.', 504: 'The local model timed out. Try a shorter request.' });
+        let detail;
+        try { detail = (await response.json())?.error?.message; } catch { /* Use the status message if the server did not send JSON. */ }
+        const error = new Error(typeof detail === 'string' && detail.length <= 500 ? detail : messages[response.status] || 'The service could not complete this request. Check the backend and try again.');
         error.status = response.status; throw error;
       }
       if (response.status === 204) return {};
@@ -33,7 +36,8 @@ window.DocodeAPI = (() => {
   return {
     chat({ mode, message, files, history, conversationId }, signal) {
       const body = new FormData();
-      body.append('mode', mode); body.append('message', message); body.append('history', JSON.stringify(history)); body.append('conversation_id', conversationId);
+      const recentHistory = history.slice(-6).map(({ role, content, attachments }) => ({ role, content: content.slice(0, 3000), attachments: (attachments || []).slice(0, 5) }));
+      body.append('mode', mode); body.append('message', message); body.append('history', JSON.stringify(recentHistory)); body.append('conversation_id', conversationId);
       files.forEach((file) => body.append('files', file));
       return request('/chat', { method: 'POST', body }, signal);
     },

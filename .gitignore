@@ -4,7 +4,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .env
+.test-tools/
 data/*.db
 data/*.db-*
 docs/phase0/eval/spike-*.csv
-
