@@ -257,3 +257,23 @@ def test_total_generation_deadline_releases_capacity(client, monkeypatch):
     assert not client.app.state.model_busy
     with client.app.state.session_factory() as db:
         assert db.get(Conversation, "text-chat") is None
+
+
+@pytest.mark.parametrize("extension,mime,location", [
+    (".txt", "text/plain", "lines 1-3"),
+    (".md", "text/markdown", "section Budget, lines 1-3"),
+])
+def test_structured_text_upload_and_retained_citations(client, extension, mime, location):
+    text = b"# Budget\nCost is 42 units.\n\n# Schedule\nDelivery is Friday."
+    first = ask(client, "Summarize", [("report" + extension, text, mime)])
+    assert first.status_code == 200
+    data = first.json()
+    assert data["sources"][0]["location"] == location
+    with client.app.state.session_factory() as db:
+        spans = db.get(Conversation, "text-chat").files[0].spans
+        assert len(spans) == 2
+        assert "".join(s.content for s in sorted(spans, key=lambda s: s.position)) == text.decode()
+    followup = ask(client, "What is the budget cost?")
+    assert followup.status_code == 200
+    assert followup.json()["source_ids"] == data["source_ids"]
+    assert followup.json()["sources"][0]["location"] == location
