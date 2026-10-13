@@ -199,7 +199,8 @@ async def chat(
             if extension in {".pdf", ".docx"}:
                 extraction_warnings.extend(await asyncio.to_thread(extract_document, source, content, extension))
             else:
-                extract_text(source, content.decode("utf-8-sig"))
+                extract_text(source, content.decode("utf-8-sig"),
+                    structure="markdown" if extension == ".md" else "paragraphs" if extension == ".txt" else "lines")
             validated.append(source)
         existing = list(conversation.files) if conversation else []
         has_context = any(source.spans for source in existing)
@@ -209,7 +210,7 @@ async def chat(
             source = SourceFile(id=str(uuid4()), conversation_id=conversation_id,
                 filename="Pasted Python" if mode == "code" else "Pasted text", media_type="text/plain",
                 size_bytes=len(pasted.encode("utf-8")), created_at=now)
-            extract_text(source, pasted)
+            extract_text(source, pasted, structure="markdown" if mode == "document" else "lines")
             validated.append(source)
         all_files = existing + validated
         if sum(len(span.content) for source in all_files for span in source.spans) > MAX_CONVERSATION_CHARS:
