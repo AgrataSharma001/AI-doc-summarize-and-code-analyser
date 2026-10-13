@@ -31,11 +31,11 @@ This is the execution checklist for the [project plan](PROJECT_PLAN.md). It assu
 
 **Lead:** C. **Support:** D for chunk boundaries. **Depends on:** phase 1 intake and database tables.
 
-- [ ] Extract TXT and Markdown while preserving paragraphs/headings; handle encoding failures.
+- [x] Extract TXT and Markdown while preserving paragraphs/headings; handle encoding failures. [P2-02 evidence](docs/phase2/TEXT_RETRIEVAL.md) records structural, retrieval, and upload/follow-up tests.
 - [x] Extract text-based PDF pages with pypdf and DOCX body paragraphs/headings/tables with python-docx. [P2-01 evidence](docs/phase2/DOCUMENT_EXTRACTION.md) records API tests and real browser/model runs.
 - [x] Save stable source IDs, page/section locations, and original ordering for every extractable span. PDF references use pages/lines; DOCX uses heading/paragraph/table-cell locations.
 - [x] Detect empty/image-only PDFs, corrupted files, oversized extracted text, and unsupported types; return actionable errors. Extraction also bounds PDF pages/decoded streams and DOCX package expansion/structure.
-- [ ] Chunk long documents by structure; evaluate retrieval by checking that known answer spans are selected.
+- [x] Chunk long documents into bounded page/paragraph/section spans; evaluate retrieval by checking that known answer spans are selected. Eleven synthetic retrieval cases pass; semantic retrieval quality and chunk-by-chunk summary synthesis remain to be evaluated/implemented.
 - [x] Disable image uploads in the frontend until OCR/vision is implemented. The current picker supports PDF/DOCX now that extraction is ready.
 
 **Exit:** A test corpus extracts with resolvable references; an image-only PDF is reported as unsupported rather than summarized as empty text.
