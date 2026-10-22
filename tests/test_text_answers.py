@@ -27,7 +27,8 @@ def response_for(request, reply="A supported answer."):
     prompt = json.loads(json.loads(request.content)["messages"][1]["content"])
     return httpx.Response(200, json={"done": True, "prompt_eval_count": 123, "eval_count": 45,
         "message": {"content": json.dumps({"reply": reply,
-            "source_ids": [prompt["source_excerpts"][0]["id"]]})}})
+            "source_ids": [prompt["source_excerpts"][0]["id"]],
+            **({"findings": []} if prompt["mode"] == "code" else {})})}})
 
 
 @pytest.fixture
@@ -277,3 +278,146 @@ def test_structured_text_upload_and_retained_citations(client, extension, mime, 
     assert followup.status_code == 200
     assert followup.json()["source_ids"] == data["source_ids"]
     assert followup.json()["sources"][0]["location"] == location
+
+
+def test_python_upload_and_followup_receive_stable_structural_evidence(client):
+    prompts = []
+
+    def model(request):
+        prompts.append(json.loads(json.loads(request.content)["messages"][1]["content"]))
+        return response_for(request)
+
+    client.app.state.model_adapter = OllamaAdapter(client.app.state.settings, httpx.MockTransport(model))
+
+    def code_ask(message, upload=False):
+        parts = [(key, (None, value)) for key, value in {
+            "mode": "code", "message": message, "conversation_id": "python-chat", "history": "[]",
+        }.items()]
+        if upload:
+            parts.append(("files", ("sample.py", b"class Service:\n    async def run(self):\n        return 42\n", "text/x-python")))
+        return client.post("/api/chat", files=parts, headers=ORIGIN)
+
+    first = code_ask("Explain", True)
+    assert first.status_code == 200
+    followup = code_ask("Review run for bugs")
+    assert followup.status_code == 200
+    assert prompts[0]["route"] == "code_explanation"
+    assert prompts[1]["route"] == "code_review"
+    for prompt in prompts:
+        symbols = prompt["source_excerpts"][0]["python_analysis"]["symbols"]
+        assert [s["qualified_name"] for s in symbols] == ["Service", "Service.run"]
+        assert symbols[1]["definition_line"] == 2
+    assert first.json()["source_ids"] == followup.json()["source_ids"]
+
+
+def code_request(client, message="Explain", files=None, conversation_id="ruff-chat"):
+    parts = [(key, (None, value)) for key, value in {
+        "mode": "code", "message": message, "conversation_id": conversation_id, "history": "[]",
+    }.items()]
+    parts.extend(("files", file) for file in files or [])
+    return client.post("/api/chat", files=parts, headers=ORIGIN)
+
+
+def test_ruff_findings_outside_model_excerpts_are_cited_persisted_and_reused(client):
+    prompts = []
+
+    def model(request):
+        prompts.append(json.loads(json.loads(request.content)["messages"][1]["content"]))
+        return response_for(request)
+
+    client.app.state.model_adapter = OllamaAdapter(client.app.state.settings, httpx.MockTransport(model))
+    code = b"# filler\n" * 700 + b"print(missing)\n"
+    first = code_request(client, files=[("example.py", code, "text/x-python")])
+    assert first.status_code == 200
+    data = first.json()
+    finding = next(f for f in data["findings"] if f["rule"] == "F821")
+    assert finding["severity"] == "medium" and finding["line"] == 701
+    assert not any("missing" in s["content"] for s in prompts[0]["source_excerpts"])
+    assert set(finding["source_ids"]) <= set(data["source_ids"])
+    assert set(data["source_ids"]) == {s["id"] for s in data["sources"]}
+    assert "Ruff static checks (potential issues)" in data["reply"]
+    assert "F821" in data["reply"] and "line 701" in data["reply"]
+    assert data["analysis"]["checks"][0]["status"] == "ok"
+    followup = code_request(client, "Review for bugs")
+    assert followup.status_code == 200
+    assert followup.json()["findings"] == data["findings"]
+    with client.app.state.session_factory() as db:
+        rows = db.scalars(select(Result).where(Result.conversation_id == "ruff-chat", Result.kind == "analysis")).all()
+        assert len(rows) == 2
+        assert json.loads(rows[0].content)["findings"] == data["findings"]
+
+
+def test_ruff_failure_does_not_block_explanation_and_discloses_coverage(client, monkeypatch):
+    monkeypatch.setattr("backend.ruff_analysis._capture", lambda *args: ("unavailable", b"private provider detail"))
+    response = code_request(client, files=[("code.py", b"print(42)\n", "text/plain")])
+    assert response.status_code == 200
+    data = response.json()
+    assert data["findings"] == []
+    assert data["analysis"]["checks"][0]["status"] == "unavailable"
+    assert any("did not complete" in warning for warning in data["warnings"])
+    assert "private provider" not in response.text
+
+
+def test_failed_model_does_not_persist_ruff_analysis(client):
+    client.app.state.model_adapter = OllamaAdapter(client.app.state.settings,
+        httpx.MockTransport(lambda request: httpx.Response(503)))
+    assert code_request(client, files=[("code.py", b"print(missing)\n", "text/plain")]).status_code == 503
+    assert not client.app.state.model_busy
+    with client.app.state.session_factory() as db:
+        assert db.get(Conversation, "ruff-chat") is None
+        assert db.scalar(select(Result)) is None
+        assert db.scalar(select(SourceSpan)) is None
+
+
+def test_model_and_ruff_findings_share_display_and_persistence_with_stable_sources(client):
+    def model(request):
+        prompt = json.loads(json.loads(request.content)["messages"][1]["content"])
+        source_id = prompt["source_excerpts"][0]["id"]
+        return httpx.Response(200, json={"done": True, "message": {"content": json.dumps({
+            "reply": "The function is guaranteed bug-free.", "source_ids": [source_id], "findings": [{
+                "severity": "medium", "source_id": source_id, "start_line": 3, "end_line": 3,
+                "message": "Potential division by zero", "reasoning": "A zero count may raise ZeroDivisionError.",
+            }],
+        })}})
+
+    client.app.state.model_adapter = OllamaAdapter(client.app.state.settings, httpx.MockTransport(model))
+    first = code_request(client, "Review", files=[("ratio.py",
+        b"import os\ndef ratio(total, count):\n    return total / count\n", "text/x-python")])
+    assert first.status_code == 200
+    data = first.json()
+    assert {finding["tool"] for finding in data["findings"]} == {"model", "ruff"}
+    generated = next(f for f in data["findings"] if f["tool"] == "model")
+    assert generated["filename"] == "ratio.py" and generated["line"] == generated["end_line"] == 3
+    assert set(generated["source_ids"]) <= set(data["source_ids"])
+    assert "Model review (potential issues)" in data["reply"] and "Ruff static checks" in data["reply"]
+    assert "guaranteed bug-free" not in data["reply"]
+    assert "Findings are potential issues and require verification" in data["reply"]
+    assert data["analysis"]["model_review"] == {"status": "validated", "finding_count": 1}
+    followup = code_request(client, "Review division again")
+    assert followup.status_code == 200 and followup.json()["findings"] == data["findings"]
+    with client.app.state.session_factory() as db:
+        rows = db.scalars(select(Result).where(Result.conversation_id == "ruff-chat", Result.kind == "analysis")).all()
+        assert len(rows) == 2 and json.loads(rows[0].content)["findings"] == data["findings"]
+
+
+def test_invalid_model_finding_after_retry_persists_nothing(client):
+    calls = []
+
+    def model(request):
+        prompt = json.loads(json.loads(request.content)["messages"][1]["content"])
+        source_id = prompt["source_excerpts"][0]["id"]
+        calls.append(source_id)
+        return httpx.Response(200, json={"done": True, "message": {"content": json.dumps({
+            "reply": "Explanation", "source_ids": [source_id], "findings": [{
+                "severity": "high", "source_id": source_id, "start_line": 1, "end_line": 999,
+                "message": "Potential issue", "reasoning": "Unsupported range",
+            }],
+        })}})
+
+    client.app.state.model_adapter = OllamaAdapter(client.app.state.settings, httpx.MockTransport(model))
+    response = code_request(client, "Review", files=[("code.py", b"x = 1\n", "text/plain")])
+    assert response.status_code == 502 and len(calls) == 2
+    assert not client.app.state.model_busy
+    with client.app.state.session_factory() as db:
+        assert db.get(Conversation, "ruff-chat") is None
+        assert db.scalar(select(SourceSpan)) is None and db.scalar(select(Result)) is None
