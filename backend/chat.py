@@ -21,10 +21,12 @@ from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import JSONResponse
 
+from backend.agent import BoundedAgent, Route
 from backend.auth import database, require_same_origin, require_user
+from backend.code_findings import model_findings, render_finding
 from backend.documents import extract_document
 from backend.models import Conversation, Result, SourceFile, User
-from backend.sources import MAX_CONVERSATION_CHARS, extract_text, select_evidence
+from backend.sources import MAX_CONVERSATION_CHARS, extract_text
 
 MAX_FILES = 5
 MAX_FILE_BYTES = 10 * 1024 * 1024
@@ -217,9 +219,9 @@ async def chat(
             raise HTTPException(413, "Conversation sources exceed 500,000 characters. Start a new conversation.")
         default_question = "Explain the supplied Python." if mode == "code" else "Summarize the supplied text."
         question = default_question if is_paste else (message.strip() or default_question)
-        evidence, partial = select_evidence(all_files, question, request.app.state.settings.model_context_chars)
-        if not evidence:
-            raise HTTPException(422, "No source text is available. Reattach a text file or paste content.")
+        agent = BoundedAgent()
+        prepared = agent.prepare(mode, question, all_files, request.app.state.settings.model_context_chars)
+        evidence, partial = prepared.evidence, prepared.partial
         history = []
         if conversation:
             results = list(reversed(session.scalars(select(Result).where(Result.conversation_id == conversation_id,
@@ -242,7 +244,8 @@ async def chat(
     try:
         try:
             async with asyncio.timeout(2 * request.app.state.settings.ollama_timeout_seconds + 5):
-                answer = await request.app.state.model_adapter.answer(mode, question, evidence, history)
+                outcome = await agent.run(prepared, history, request.app.state.model_adapter)
+                answer = outcome.answer
         except TimeoutError as exc:
             raise HTTPException(504, "The local model timed out. Try a shorter request.") from exc
         conversation = session.get(Conversation, conversation_id)
@@ -263,14 +266,33 @@ async def chat(
                                         created_at=now, expires_at=now + RETENTION_SECONDS)
             session.add(conversation)
         citations = [span for span in evidence if span["id"] in answer["source_ids"]]
+        analysis = outcome.static_analysis
+        generated_findings = model_findings(answer, evidence) if mode == "code" else []
+        findings = generated_findings + (analysis["findings"] if analysis else [])
+        if analysis:
+            known = {span["id"] for span in citations}
+            citations.extend(span for span in analysis["sources"] if span["id"] not in known)
         references = "\n\nSources:\n" + "\n".join(
             f"[source: {span['id']}, {span['filename']}, {span['location']}]" for span in citations)
-        warnings = list(extraction_warnings)
+        warnings = list(extraction_warnings) + list(prepared.warnings)
+        if analysis:
+            warnings.extend(analysis["warnings"])
         if partial:
             warnings.append("Only selected source excerpts fit the model context; this answer may omit other sections.")
         if len(question) > 3000:
             warnings.append("The request was shortened for the local model; use a shorter follow-up for specific questions.")
-        reply = answer["reply"] + references
+        reply = ("Review results for the selected source excerpts are shown below. "
+                 "Findings are potential issues and require verification."
+                 if prepared.route == Route.CODE_REVIEW else answer["reply"])
+        if generated_findings:
+            reply += "\n\nModel review (potential issues):"
+            reply += "".join(render_finding(finding) for finding in generated_findings)
+        if analysis:
+            reply += "\n\nRuff static checks (potential issues):"
+            reply += "".join(render_finding(finding) for finding in analysis["findings"])
+            if not analysis["findings"]:
+                reply += "\nNo mapped findings returned; review any coverage warnings. These checks do not establish correctness."
+        reply += references
         if warnings:
             reply += "\n\n" + "\n".join(warnings)
         conversation.files.extend(validated)
@@ -278,19 +300,26 @@ async def chat(
             Result(id=str(uuid4()), conversation_id=conversation_id, kind="user", content=question[:3000], created_at=now),
             Result(id=str(uuid4()), conversation_id=conversation_id, kind="assistant", content=reply, created_at=now),
         ])
+        if analysis:
+            session.add(Result(id=str(uuid4()), conversation_id=conversation_id, kind="analysis",
+                               content=json.dumps({"tools": ["model", "ruff"], "findings": findings,
+                                                   "checks": analysis["checks"]}), created_at=now))
         try:
             session.commit()
         except IntegrityError as exc:
             session.rollback()
             raise HTTPException(409, "Conversation changed. Retry the request.") from exc
-        logging.getLogger(__name__).info("Chat completed mode=%s elapsed_ms=%d sources=%d prompt_tokens=%s output_tokens=%s",
-            mode, int((time.monotonic() - started) * 1000), len(evidence),
+        logging.getLogger(__name__).info("Chat completed mode=%s route=%s stages=%s elapsed_ms=%d sources=%d prompt_tokens=%s output_tokens=%s",
+            mode, prepared.route.value, ",".join(outcome.stages), int((time.monotonic() - started) * 1000), len(evidence),
             answer.get("prompt_tokens"), answer.get("output_tokens"))
     finally:
         request.app.state.model_busy = False
     return {
         "status": "answered", "conversation_id": conversation_id, "reply": reply,
-        "source_ids": answer["source_ids"],
+        "source_ids": [span["id"] for span in citations],
+        **({"findings": findings, "analysis": {"tool": "ruff", "checks": analysis["checks"],
+                                              "model_review": {"status": "validated", "finding_count": len(generated_findings)}}}
+           if analysis else {}),
         "sources": [{k: span[k] for k in ("id", "file_id", "filename", "location")} for span in citations],
         "warnings": warnings,
         "files": [{"id": f.id, "filename": f.filename, "size_bytes": f.size_bytes} for f in validated],
