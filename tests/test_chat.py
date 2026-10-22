@@ -24,6 +24,7 @@ def client(tmp_path):
         prompt = json.loads(json.loads(request.content)["messages"][1]["content"])
         return httpx.Response(200, json={"done": True, "message": {"content": json.dumps({
             "reply": "Answer from supplied source.", "source_ids": [prompt["source_excerpts"][0]["id"]],
+            **({"findings": []} if prompt["mode"] == "code" else {}),
         })}})
     app.state.model_adapter = OllamaAdapter(app.state.settings, httpx.MockTransport(model_response))
     with TestClient(app) as client:
