@@ -1,5 +1,6 @@
 """Non-executing UTF-8 extraction and bounded evidence selection."""
 
+import json
 import re
 from uuid import uuid4
 
@@ -79,10 +80,13 @@ def extract_text(source: SourceFile, text: str, location_prefix: str = "", *, st
     flush()
 
 
-def select_evidence(files: list[SourceFile], question: str, budget: int) -> tuple[list[dict], bool]:
+def select_evidence(files: list[SourceFile], question: str, budget: int, *,
+                    annotations: dict | None = None) -> tuple[list[dict], bool]:
     spans = [{"id": span.id, "file_id": source.id, "filename": source.filename,
               "location": span.location, "content": span.content}
              for source in files for span in sorted(source.spans, key=lambda s: s.position)]
+    for span in spans:
+        span.update((annotations or {}).get(span["id"], {}))
     terms = set(re.findall(r"\w{3,}", question.lower()))
     # Keep source order when scores tie; targeted follow-ups promote relevant spans.
     ranked = sorted(enumerate(spans), key=lambda item: (
@@ -90,6 +94,17 @@ def select_evidence(files: list[SourceFile], question: str, budget: int) -> tupl
     chosen, used = [], 0
     for index, span in ranked:
         cost = len(span["content"]) + len(span["filename"]) + 160
+        if "python_analysis" in span:
+            analysis = dict(span["python_analysis"])
+            analysis["symbols"] = list(analysis["symbols"])
+            while analysis["symbols"] and used + cost + len(json.dumps(analysis, ensure_ascii=False)) > budget:
+                analysis["symbols"].pop()
+                analysis["symbols_omitted"] = True
+            if used + cost + len(json.dumps(analysis, ensure_ascii=False)) <= budget:
+                span["python_analysis"] = analysis
+                cost += len(json.dumps(analysis, ensure_ascii=False))
+            else:
+                del span["python_analysis"]
         if used + cost <= budget:
             chosen.append((index, span))
             used += cost
