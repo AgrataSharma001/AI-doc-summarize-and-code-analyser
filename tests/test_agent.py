@@ -19,6 +19,9 @@ from backend.sources import extract_text
     ("code", "Explain the supplied Python.", Route.CODE_EXPLANATION),
     ("code", "Review for bugs", Route.CODE_REVIEW),
     ("code", "Find security vulnerabilities", Route.CODE_REVIEW),
+    ("code", "Correct this Python", Route.CODE_REVIEW),
+    ("code", "Fix this function", Route.CODE_REVIEW),
+    ("code", "Debug the attached file", Route.CODE_REVIEW),
 ])
 def test_routes(mode, question, route):
     assert classify_request(mode, question) == route

@@ -60,6 +60,30 @@ def test_chat_persists_owner_and_source_text(client):
     assert post(client, fields={"message": "Follow-up"}).status_code == 200
 
 
+@pytest.mark.parametrize("encoding", ["utf-8", "utf-8-sig", "utf-16", "utf-32", "cp1252"])
+def test_windows_text_upload_reaches_model_and_retains_readable_source(client, encoding):
+    text = "Project budget: 240 euros.\r\nOwner: Ren\u00e9e.\r\nDelivery: Friday."
+    prompts = []
+
+    def model(request):
+        prompt = json.loads(json.loads(request.content)["messages"][1]["content"])
+        prompts.append(prompt)
+        return httpx.Response(200, json={"done": True, "message": {"content": json.dumps({
+            "reply": "Ren\u00e9e owns the project with a 240 euro budget, due Friday.",
+            "source_ids": [prompt["source_excerpts"][0]["id"]],
+        })}})
+
+    client.app.state.model_adapter = OllamaAdapter(client.app.state.settings, httpx.MockTransport(model))
+    response = post(client, fields={"message": ""}, files=[("notes.TXT", text.encode(encoding), "text/plain")])
+    assert response.status_code == 200, response.text
+    assert "Ren\u00e9e" in response.json()["reply"]
+    assert prompts[0]["source_excerpts"][0]["content"] == text
+    with client.app.state.session_factory() as db:
+        assert db.get(Conversation, "test-chat").files[0].spans[0].content == text
+    assert post(client, fields={"message": "Who owns the project?"}).status_code == 200
+    assert prompts[1]["source_excerpts"][0]["content"] == text
+
+
 def test_login_origin_and_expired_session(client):
     assert post(client, headers={}).status_code == 403
     assert post(client, headers={"Origin": "https://evil.example"}).status_code == 403

@@ -332,6 +332,8 @@ def test_ruff_findings_outside_model_excerpts_are_cited_persisted_and_reused(cli
     data = first.json()
     finding = next(f for f in data["findings"] if f["rule"] == "F821")
     assert finding["severity"] == "medium" and finding["line"] == 701
+    assert finding["code_excerpt"] == {"lines": [{"line": 701, "code": "print(missing)"}], "truncated": False}
+    assert "701 | print(missing)" in data["reply"]
     assert not any("missing" in s["content"] for s in prompts[0]["source_excerpts"])
     assert set(finding["source_ids"]) <= set(data["source_ids"])
     assert set(data["source_ids"]) == {s["id"] for s in data["sources"]}
@@ -356,6 +358,31 @@ def test_ruff_failure_does_not_block_explanation_and_discloses_coverage(client, 
     assert data["analysis"]["checks"][0]["status"] == "unavailable"
     assert any("did not complete" in warning for warning in data["warnings"])
     assert "private provider" not in response.text
+
+
+def test_syntax_error_is_cited_persisted_and_retained_without_ruff(client, monkeypatch):
+    monkeypatch.setattr("backend.ruff_analysis._capture", lambda *args: ("unavailable", b""))
+    first = code_request(client, "Find errors", files=[("broken.py", b"# example\nreturn 42\n", "text/plain")])
+    assert first.status_code == 200, first.text
+    data = first.json()
+    finding = next(f for f in data["findings"] if f["tool"] == "python")
+    assert finding["rule"] == "SyntaxError"
+    assert finding["line"] == 2 and finding["filename"] == "broken.py"
+    assert finding["code_excerpt"] == {"lines": [{"line": 2, "code": "return 42"}], "truncated": False}
+    assert "2 | return 42" in data["reply"]
+    assert set(finding["source_ids"]) <= set(data["source_ids"])
+    assert "Python syntax errors:" in data["reply"]
+    assert "return" in finding["message"]
+    assert data["analysis"]["syntax_checks"][0]["status"] == "syntax_error"
+    assert data["analysis"]["checks"][0]["status"] == "unavailable"
+    followup = code_request(client, "Review again")
+    assert followup.status_code == 200
+    assert followup.json()["findings"] == data["findings"]
+    with client.app.state.session_factory() as db:
+        result = db.scalar(select(Result).where(Result.conversation_id == "ruff-chat", Result.kind == "analysis"))
+        stored = json.loads(result.content)
+        assert stored["findings"] == data["findings"]
+        assert stored["syntax_checks"] == data["analysis"]["syntax_checks"]
 
 
 def test_failed_model_does_not_persist_ruff_analysis(client):
@@ -388,6 +415,11 @@ def test_model_and_ruff_findings_share_display_and_persistence_with_stable_sourc
     assert {finding["tool"] for finding in data["findings"]} == {"model", "ruff"}
     generated = next(f for f in data["findings"] if f["tool"] == "model")
     assert generated["filename"] == "ratio.py" and generated["line"] == generated["end_line"] == 3
+    assert generated["code_excerpt"] == {
+        "lines": [{"line": 3, "code": "    return total / count"}], "truncated": False}
+    assert "3 |     return total / count" in data["reply"]
+    assert "Issue: Potential division by zero" in data["reply"]
+    assert "Reason: A zero count may raise ZeroDivisionError." in data["reply"]
     assert set(generated["source_ids"]) <= set(data["source_ids"])
     assert "Model review (potential issues)" in data["reply"] and "Ruff static checks" in data["reply"]
     assert "guaranteed bug-free" not in data["reply"]
@@ -421,3 +453,73 @@ def test_invalid_model_finding_after_retry_persists_nothing(client):
     with client.app.state.session_factory() as db:
         assert db.get(Conversation, "ruff-chat") is None
         assert db.scalar(select(SourceSpan)) is None and db.scalar(select(Result)) is None
+
+
+def test_corrections_show_original_and_replacement_code_and_persist_on_followup(client):
+    def model(request):
+        prompt = json.loads(json.loads(request.content)["messages"][1]["content"])
+        source_id = prompt["source_excerpts"][0]["id"]
+        return httpx.Response(200, json={"done": True, "message": {"content": json.dumps({
+            "reply": "The implementation subtracts instead of adding.", "source_ids": [source_id],
+            "findings": [{"severity": "medium", "source_id": source_id, "start_line": 2, "end_line": 2,
+                          "message": "Incorrect arithmetic", "reasoning": "The function promises a sum but subtracts."}],
+            "corrections": [{"source_id": source_id, "start_line": 2, "end_line": 2,
+                             "replacement_code": "    return a + b",
+                             "explanation": "Use addition to compute the sum promised by the docstring."}],
+        })}})
+
+    client.app.state.model_adapter = OllamaAdapter(client.app.state.settings, httpx.MockTransport(model))
+    source = b'def add(a, b):\n    return a - b\nadd.__doc__ = "Return the sum of a and b."\n'
+    first = code_request(client, "Correct the addition function", files=[("add.py", source, "text/plain")])
+    assert first.status_code == 200, first.text
+    data = first.json()
+    correction = data["corrections"][0]
+    assert correction["replacement_code"] == "    return a + b"
+    assert correction["filename"] == "add.py" and correction["start_line"] == correction["end_line"] == 2
+    assert correction["code_excerpt"]["lines"] == [{"line": 2, "code": "    return a - b"}]
+    assert correction["validation_status"] == "checks_passed"
+    assert set(correction["source_ids"]) <= set(data["source_ids"])
+    assert "Suggested corrections:" in data["reply"]
+    assert data["analysis"]["correction_validation"][0]["status"] == "checks_passed"
+    assert "replace lines 2-2" in data["reply"] and "    return a + b" in data["reply"]
+    assert data["reply"].index("Incorrect arithmetic") < data["reply"].index("Suggested replacement code:")
+    followup = code_request(client, "Show the correction again")
+    assert followup.status_code == 200
+    assert followup.json()["corrections"] == data["corrections"]
+    with client.app.state.session_factory() as db:
+        result = db.scalar(select(Result).where(Result.conversation_id == "ruff-chat", Result.kind == "analysis"))
+        assert json.loads(result.content)["corrections"] == data["corrections"]
+        assert json.loads(result.content)["correction_validation"] == data["analysis"]["correction_validation"]
+        assert db.get(Conversation, "ruff-chat").files[0].spans[0].content == source.decode()
+
+
+@pytest.mark.parametrize("replacement,expected", [
+    ("    return (", "syntax_error"),
+    ("    return missing", "issues_remaining"),
+    ("    return a + b", "incomplete"),
+])
+def test_correction_validation_failures_are_visible_in_api_reply(client, monkeypatch, replacement, expected):
+    if expected == "incomplete":
+        monkeypatch.setattr("backend.correction_validation.run_ruff", lambda *args, **kwargs: {
+            "status": "unavailable", "findings": [], "truncated": False})
+
+    def model(request):
+        prompt = json.loads(json.loads(request.content)["messages"][1]["content"])
+        source_id = prompt["source_excerpts"][0]["id"]
+        return httpx.Response(200, json={"done": True, "message": {"content": json.dumps({
+            "reply": "Suggested change.", "source_ids": [source_id], "findings": [],
+            "corrections": [{"source_id": source_id, "start_line": 2, "end_line": 2,
+                             "replacement_code": replacement, "explanation": "Change the arithmetic."}],
+        })}})
+
+    client.app.state.model_adapter = OllamaAdapter(client.app.state.settings, httpx.MockTransport(model))
+    response = code_request(client, "Correct this function", files=[
+        ("add.py", b"def add(a, b):\n    return a - b\n", "text/plain")])
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["corrections"][0]["validation_status"] == expected
+    assert data["analysis"]["correction_validation"][0]["status"] == expected
+    assert "Correction validation" in data["reply"]
+    assert "Python syntax and configured Ruff checks passed" not in data["reply"]
+    if expected in {"syntax_error", "issues_remaining"}:
+        assert "Proposed file, line 2" in data["reply"]

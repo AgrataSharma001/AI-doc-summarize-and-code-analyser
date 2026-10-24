@@ -80,7 +80,7 @@ def test_adapter_retries_invalid_finding_once(recover):
         assert error.value.status_code == 502
     assert len(calls) == 2
     assert "findings" in calls[0]["format"]["required"]
-    assert calls[0]["options"]["num_predict"] == 1024
+    assert calls[0]["options"]["num_predict"] == 2048
     assert "valid severity and line range" in calls[1]["messages"][-1]["content"]
 
 

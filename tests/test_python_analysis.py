@@ -35,6 +35,24 @@ def test_malformed_python_produces_diagnostic(text):
     assert result["diagnostics"][0]["line"] >= 1
 
 
+@pytest.mark.parametrize("text,line,error_type", [
+    ("# example\ndef broken(:\n    pass", 2, "SyntaxError"),
+    ("# example\nvalues = (\n    1", 2, "SyntaxError"),
+    ("# example\nx = '''unfinished", 2, "SyntaxError"),
+    ("def f():\npass", 2, "IndentationError"),
+    ("# example\nreturn 1", 2, "SyntaxError"),
+    ("# example\nbreak", 2, "SyntaxError"),
+    ("# example\nawait task()", 2, "SyntaxError"),
+])
+def test_syntax_diagnostics_locate_parser_and_compile_errors(text, line, error_type):
+    result = analyze_python(text)
+    assert result["status"] == "syntax_error"
+    diagnostic = result["diagnostics"][0]
+    assert diagnostic["line"] == line
+    assert diagnostic["error_type"] == error_type
+    assert diagnostic["column"] >= 1
+
+
 @pytest.mark.parametrize("text", ["x" * 200001, "x = " + "(" * 81 + "1" + ")" * 81],
                          ids=["character-limit", "nesting-limit"])
 def test_analysis_bounds(text):
@@ -57,6 +75,43 @@ def test_tools_reconstruct_split_lines_and_omitted_blank_chunks():
         tools.get_source_span("foreign-span")
     with pytest.raises(KeyError):
         tools.get_python_symbols("foreign-file")
+
+
+def test_code_excerpts_preserve_indentation_unicode_and_line_numbers():
+    source = source_for("# Ren\u00e9e\r\ndef work():\r\n\tvalue = 42\r\n\treturn value\r\n")
+    tools = SourceTools([source])
+    assert tools.get_code_excerpt(source.id, 3, 4) == {"lines": [
+        {"line": 3, "code": "\tvalue = 42"}, {"line": 4, "code": "\treturn value"}], "truncated": False}
+    with pytest.raises(KeyError):
+        tools.get_code_excerpt("foreign-file", 1, 1)
+    assert tools.get_code_excerpt(source.id, 0, 1) is None
+    assert tools.get_code_excerpt(source.id, 4, 3) is None
+    assert tools.get_code_excerpt(source.id, 99, 100) is None
+
+
+def test_code_excerpt_uses_full_split_line_and_restores_skipped_blank_lines():
+    text = "# " + "a" * 5000 + "\n" + "\n" * 2000 + "print(missing)\n"
+    source = source_for(text)
+    tools = SourceTools([source])
+    assert tools.get_code_excerpt(source.id, 2002, 2002) == {
+        "lines": [{"line": 2002, "code": "print(missing)"}], "truncated": False}
+    excerpt = tools.get_code_excerpt(source.id, 1, 1)
+    assert len(excerpt["lines"][0]["code"]) == 2000
+    assert excerpt["truncated"]
+
+
+def test_code_excerpts_limit_multiline_ranges_and_return_independent_copies():
+    source = source_for("\n".join(f"value_{i} = {i}" for i in range(20)))
+    tools = SourceTools([source])
+    excerpt = tools.get_code_excerpt(source.id, 1, 20)
+    assert len(excerpt["lines"]) == 8 and excerpt["truncated"]
+    excerpt["lines"][0]["code"] = "tampered"
+    assert tools.get_code_excerpt(source.id, 1, 1)["lines"][0]["code"] == "value_0 = 0"
+
+
+def test_code_excerpt_does_not_guess_unsupported_mapping():
+    source = source_for("# comment\fdef work(): pass")
+    assert SourceTools([source]).get_code_excerpt(source.id, 1, 1) is None
 
 
 def test_inspection_never_executes_upload(tmp_path):

@@ -76,6 +76,37 @@ def test_invalid_checker_output_is_rejected(monkeypatch, output):
     assert run_ruff("x = 1")["status"] == "invalid_output"
 
 
+def test_ruff_null_syntax_code_is_supported(monkeypatch):
+    rows = [{"code": None, "message": "Expected a statement", "location": {"row": 1, "column": 1}}]
+    monkeypatch.setattr("backend.ruff_analysis._capture", lambda *args: ("ok", json.dumps(rows).encode()))
+    result = run_ruff("def broken(:")
+    assert result["status"] == "ok"
+    assert result["findings"][0]["rule"] == "invalid-syntax"
+
+
+def test_syntax_detection_survives_ruff_failure(monkeypatch):
+    monkeypatch.setattr("backend.source_tools.run_ruff", lambda *args, **kwargs: {
+        "status": "unavailable", "findings": [], "truncated": False})
+    tools, source = tools_for("# example\nvalues = (\n    1")
+    result = tools.check_python()
+    finding = result["findings"][0]
+    assert finding["tool"] == "python" and finding["rule"] == "SyntaxError"
+    assert finding["line"] == 2
+    assert finding["source_ids"] == [source.spans[0].id]
+    assert result["syntax_checks"][0]["status"] == "syntax_error"
+    assert result["checks"][0]["status"] == "unavailable"
+
+
+def test_syntax_findings_do_not_duplicate_ruff_syntax_reports(monkeypatch):
+    monkeypatch.setattr("backend.source_tools.run_ruff", lambda *args, **kwargs: {
+        "status": "ok", "findings": [{"tool": "ruff", "rule": "invalid-syntax", "line": 1}],
+        "truncated": False})
+    tools, _ = tools_for("def broken(:")
+    result = tools.check_python()
+    assert len(result["findings"]) == 1
+    assert result["findings"][0]["tool"] == "python"
+
+
 def test_output_count_and_file_count_limits(monkeypatch):
     row = {"code": "F821", "message": "Undefined name", "location": {"row": 1, "column": 1}}
     monkeypatch.setattr("backend.ruff_analysis._capture", lambda *args: ("ok", json.dumps([row] * 150).encode()))
