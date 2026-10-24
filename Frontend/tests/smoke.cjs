@@ -16,7 +16,7 @@ const assert = require('node:assert/strict');
     const errors = [];
     page.on('pageerror', (error) => errors.push(error.message));
     const root = path.resolve(__dirname, '..');
-    let user = null, chatBody = '', chatStatus = 200, authStatus = 200, logoutStatus = 204, slow = false;
+    let user = null, chatBody = '', chatStatus = 200, authStatus = 200, logoutStatus = 204, slow = false, chatData = null;
     await context.route('http://docode.test/**', async (route) => {
       const request = route.request(), url = new URL(request.url());
       if (url.pathname.startsWith('/api/')) {
@@ -34,7 +34,7 @@ const assert = require('node:assert/strict');
           if (status === 204) user = null;
         } else if (url.pathname === '/api/chat') {
           chatBody = request.postData(); status = chatStatus;
-          data = { reply: 'A clear summary. <img src=x onerror=alert(1)>' };
+          data = chatData || { reply: 'A clear summary. <img src=x onerror=alert(1)>' };
           if (slow) await new Promise((resolve) => setTimeout(resolve, 350));
         }
         return route.fulfill({ status, contentType: 'application/json', body: status === 204 ? '' : JSON.stringify(data) }).catch(() => {});
@@ -76,7 +76,55 @@ const assert = require('node:assert/strict');
     assert.equal(await page.locator('.message.assistant').count(), 2);
     console.log('PASS: navigation, templates, attachments + instructions, safe output, download, follow-up history and reload.');
 
+    const original = { lines: [{ line: 3, code: '    return a - b  # <img src=x onerror=alert(1)>' }], truncated: false };
+    chatData = { reply: 'Complete plain-text code report with original sources.', findings: [
+      { tool: 'model', file_id: 'code-file', filename: 'add.py', severity: 'medium', line: 3, end_line: 3,
+        message: 'Subtraction conflicts with the promised sum', reasoning: 'The docstring promises addition.', code_excerpt: original },
+      { tool: 'python', file_id: 'broken-file', filename: 'broken.py', line: 1, column: 5,
+        message: 'Invalid Python syntax', reasoning: 'A colon is missing.', code_excerpt: { lines: [{ line: 1, code: 'def work()' }], truncated: false } },
+    ], corrections: [{ file_id: 'code-file', filename: 'add.py', start_line: 3, end_line: 3,
+      replacement_code: '    return a + b', explanation: 'Use addition to match the docstring.', validation_status: 'checks_passed', code_excerpt: original }],
+      analysis: { checks: [{ filename: 'add.py', status: 'ok' }], syntax_checks: [{ filename: 'add.py', status: 'ok' }],
+        correction_validation: [{ file_id: 'code-file', filename: 'add.py', status: 'checks_passed', syntax: { status: 'ok', diagnostics: [] },
+          ruff: { status: 'ok', findings: [], truncated: false } }] }, warnings: ['Results cover selected excerpts.'] };
+    await page.locator('#code-mode').click();
+    await page.locator('#file-input').setInputFiles({ name: 'add.py', mimeType: 'text/plain', buffer: Buffer.from('def add(a, b):\n    return a - b\n') });
+    await page.locator('#prompt').fill('Correct this function.');
+    await page.locator('#send-button').click();
+    await page.locator('.code-review').waitFor();
+    assert.equal(await page.locator('.review-title').textContent(), '2 issues to review');
+    assert.match(await page.locator('.review-issue').first().textContent(), /Invalid Python syntax/);
+    assert.match(await page.locator('.review-correction pre').textContent(), /^    return a \+ b$/);
+    assert.equal(await page.locator('.code-review img').count(), 0);
+    assert.match(await page.locator('.review-code').nth(1).textContent(), /<img src=x/);
+    assert.match(await page.locator('.review-validation').textContent(), /Static checks passed/);
+    assert.equal(await page.locator('.review-details').last().getAttribute('open'), null);
+    await page.getByText('Full report and source references', { exact: true }).click();
+    assert.equal(await page.locator('.message.assistant .message-text').textContent(), chatData.reply);
+    await page.reload();
+    await page.locator('.recent-chat').first().click();
+    await page.locator('.code-review').waitFor();
+    assert.equal(await page.locator('.review-issue').count(), 2);
+    assert.match(await page.locator('.review-correction pre').textContent(), /return a \+ b/);
+    const screenshots = path.resolve(__dirname, '../../.test-tools');
+    fs.mkdirSync(screenshots, { recursive: true });
+    await page.screenshot({ path: path.join(screenshots, 'code-review-desktop.png'), fullPage: true, animations: 'disabled' });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForFunction(() => document.documentElement.scrollWidth <= innerWidth);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await page.screenshot({ path: path.join(screenshots, 'code-review-mobile.png'), fullPage: true, animations: 'disabled' });
+    await page.setViewportSize({ width: 1440, height: 960 });
+    chatData = { ...chatData, findings: [], corrections: [], analysis: { checks: [{ filename: 'add.py', status: 'unavailable' }] } };
+    await page.locator('#new-chat').click(); await page.locator('#prompt').fill('Check again.'); await page.locator('#send-button').click();
+    await page.locator('.review-title').filter({ hasText: 'No issues reported' }).waitFor();
+    assert.match(await page.locator('.code-review').textContent(), /unavailable/);
+    assert.match(await page.locator('.code-review').textContent(), /Some original-file checks did not complete/);
+    assert.equal(await page.locator('details').filter({ has: page.getByText('Checker coverage and notes', { exact: true }) }).evaluate((element) => element.open), true);
+    chatData = null;
+    console.log('PASS: error-first code review, original and replacement code, validation, safe text, saved reviews, mobile widths and incomplete-check empty state.');
+
     await page.locator('#new-chat').click();
+    await page.locator('#document-mode').click();
     // Picker acceptance only; real parsing is exercised by API and live tests.
     for (const [name, mimeType] of [['report.pdf', 'application/pdf'], ['report.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']]) {
       await page.locator('#file-input').setInputFiles({ name, mimeType, buffer: Buffer.from('picker fixture') });
