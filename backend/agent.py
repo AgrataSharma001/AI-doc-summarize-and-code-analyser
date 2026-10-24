@@ -50,7 +50,14 @@ ROUTE_INSTRUCTIONS = {
         "reserve high for source-supported security or data-loss risks. "
         "For each finding return severity (low/medium/high), source_id, start_line, end_line, "
         "message, and reasoning. Both line numbers must fall within that single supplied excerpt. "
-        "Use at most eight findings; return an empty array when no potential issues are supported.",
+        "Use at most eight findings; return an empty array when no potential issues are supported. "
+        "For concrete issues you can fix from the excerpts, provide corrections with source_id, "
+        "start_line, end_line, replacement_code, and explanation. Replacement code must replace the "
+        "entire inclusive original line range, preserving Python indentation. Do not use Markdown fences, "
+        "placeholders, or ellipses. Explain how each change addresses the issue. Keep changes minimal; "
+        "do not invent requirements, silently remove behavior, or propose overlapping edits. "
+        "Use at most four corrections; return [] when a reliable correction needs more context. "
+        "These are untested suggestions; never claim they were executed or verified.",
 }
 
 
@@ -61,7 +68,7 @@ def classify_request(mode: str, question: str) -> Route:
                 else Route.DOCUMENT_QA)
     if mode == "code":
         return (Route.CODE_REVIEW if re.search(
-            r"\b(review|bugs?|issues?|vulnerabilit\w*|security|lint|errors?)\b", question, re.IGNORECASE)
+            r"\b(review|bugs?|issues?|vulnerabilit\w*|security|lint|errors?|fix\w*|correct\w*|debug\w*)\b", question, re.IGNORECASE)
                 else Route.CODE_EXPLANATION)
     raise HTTPException(422, "Mode must be document or code.")
 
@@ -119,7 +126,8 @@ class BoundedAgent:
             raise HTTPException(502, "The model returned an invalid answer or citation. Please retry.") from exc
         stages.append(Stage.RESPONSE)
         finding_ids = [finding.source_id for finding in getattr(answer, "findings", [])]
+        correction_ids = [correction.source_id for correction in getattr(answer, "corrections", [])]
         return AgentResult({**answer.model_dump(), "reply": answer.reply.strip(),
-                            "source_ids": list(dict.fromkeys([*answer.source_ids, *finding_ids])),
+                            "source_ids": list(dict.fromkeys([*answer.source_ids, *finding_ids, *correction_ids])),
                             "prompt_tokens": raw.get("prompt_tokens"),
                             "output_tokens": raw.get("output_tokens")}, tuple(stages), static_analysis)
