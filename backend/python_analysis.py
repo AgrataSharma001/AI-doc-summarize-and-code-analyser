@@ -11,6 +11,12 @@ MAX_NODES = 50_000
 MAX_SYMBOLS = 1000
 
 
+def _syntax_result(result: dict, exc: SyntaxError) -> dict:
+    return {**result, "status": "syntax_error", "diagnostics": [{
+        "message": exc.msg[:200], "line": exc.lineno, "column": exc.offset,
+        "error_type": type(exc).__name__}]}
+
+
 def analyze_python(text: str) -> dict:
     result = {"status": "ok", "symbols": [], "diagnostics": []}
     if len(text) > MAX_CHARS:
@@ -18,11 +24,16 @@ def analyze_python(text: str) -> dict:
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     try:
         nesting = 0
-        for count, token in enumerate(tokenize.generate_tokens(io.StringIO(text).readline), 1):
-            if token.type == tokenize.OP:
-                nesting += int(token.string in "([{") - int(token.string in ")]}")
-            if count > MAX_TOKENS or nesting > MAX_NESTING:
-                return {**result, "status": "limited", "diagnostics": [{"message": "Python token/nesting limit exceeded."}]}
+        try:
+            for count, token in enumerate(tokenize.generate_tokens(io.StringIO(text).readline), 1):
+                if token.type == tokenize.OP:
+                    nesting += int(token.string in "([{") - int(token.string in ")]}")
+                if count > MAX_TOKENS or nesting > MAX_NESTING:
+                    return {**result, "status": "limited", "diagnostics": [{"message": "Python token/nesting limit exceeded."}]}
+        except tokenize.TokenError:
+            # The parser locates an unclosed delimiter/string at its origin,
+            # whereas tokenize often points beyond the end of the file.
+            pass
         tree = ast.parse(text, filename="<uploaded Python>")
         stack = [(tree, "")]
         visited = 0
@@ -40,12 +51,11 @@ def analyze_python(text: str) -> dict:
                     "start_line": start, "definition_line": node.lineno, "end_line": node.end_lineno})
                 scope = qualified
             stack.extend((child, scope) for child in reversed(list(ast.iter_child_nodes(node))))
+        # AST parsing alone accepts e.g. `return` outside a function. Compile
+        # the bounded tree to catch those errors; never execute the bytecode.
+        compile(tree, "<uploaded Python>", "exec")
     except SyntaxError as exc:
-        return {**result, "status": "syntax_error", "diagnostics": [{
-            "message": exc.msg[:200], "line": exc.lineno, "column": exc.offset}]}
-    except tokenize.TokenError as exc:
-        return {**result, "status": "syntax_error", "diagnostics": [{
-            "message": str(exc.args[0])[:200], "line": exc.args[1][0], "column": exc.args[1][1] + 1}]}
+        return _syntax_result(result, exc)
     except (RecursionError, MemoryError):
         return {**result, "status": "limited", "diagnostics": [{"message": "Python parser resource limit reached."}]}
     return result

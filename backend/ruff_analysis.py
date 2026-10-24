@@ -71,6 +71,9 @@ def run_ruff(text: str, timeout: float = 3) -> dict:
         lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
         for row in rows[:MAX_FINDINGS]:
             code, message, location = row["code"], row["message"], row["location"]
+            # Ruff emits null codes for syntax diagnostics in some versions.
+            if code is None:
+                code = "invalid-syntax"
             line, column = location["row"], location["column"]
             if (not isinstance(code, str) or not isinstance(message, str)
                     or type(line) is not int or type(column) is not int

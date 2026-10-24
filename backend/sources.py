@@ -1,5 +1,6 @@
-"""Non-executing UTF-8 extraction and bounded evidence selection."""
+"""Non-executing text extraction and bounded evidence selection."""
 
+import codecs
 import json
 import re
 from uuid import uuid4
@@ -11,6 +12,26 @@ from backend.models import SourceFile, SourceSpan
 MAX_SOURCE_CHARS = 200_000
 MAX_CONVERSATION_CHARS = 500_000
 SPAN_CHARS = 1600
+
+
+def decode_text(content: bytes, extension: str) -> str:
+    """Read Unicode and Windows text exports without guessing BOM-less UTF-16."""
+    encoding = "utf-8-sig"
+    if extension in {".txt", ".md"}:
+        # UTF-32 markers must be checked before their UTF-16 prefixes.
+        if content.startswith((codecs.BOM_UTF32_LE, codecs.BOM_UTF32_BE)):
+            encoding = "utf-32"
+        elif content.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+            encoding = "utf-16"
+    try:
+        return content.decode(encoding)
+    except UnicodeDecodeError as exc:
+        if extension in {".txt", ".md"} and encoding == "utf-8-sig":
+            try:
+                return content.decode("cp1252")
+            except UnicodeDecodeError:
+                pass
+        raise HTTPException(422, "Cannot decode text file. Save it as UTF-8 and upload it again.") from exc
 
 
 def extract_text(source: SourceFile, text: str, location_prefix: str = "", *, structure: str = "lines") -> None:
