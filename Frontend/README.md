@@ -84,3 +84,11 @@ Remove-Item Env:DOCODE_TEST_FORMAT
 The generated files are stored in ignored `.test-tools/fixtures/`. The PDF has three text pages; the DOCX has a heading, body paragraphs, and an owner table. Both preserve the test's expected Project Orion budget and owner. See [P2-01 evidence](../docs/phase2/DOCUMENT_EXTRACTION.md).
 
 This example uses installed Microsoft Edge. Alternatively, install Playwright Chromium with `.\.test-tools\node_modules\.bin\playwright.cmd install chromium` and remove `BROWSER_CHANNEL` from the environment. The live test accepts only a loopback HTTP URL and fails if the API/model is unavailable. Each run adds a synthetic user; conversation sources expire after 24 hours, while accounts remain in the test database. Stop the backend before removing that dedicated database. See [P1-05 evidence](../docs/phase1/LIVE_INTEGRATION.md) for the recorded run.
+
+## Code review display
+
+Code-mode responses with structured findings now render issue cards, with Python syntax errors first. Each card shows its origin/severity, message, filename and line/column, reason, and numbered original code. Matching correction ranges appear with their issue, followed by replacement code, explanation, and validation status. Unmatched proposals appear separately. Per-file validation lists any remaining diagnostics against the proposed file's line numbers.
+
+Checker coverage and notes are expandable and open automatically when original-file checks are incomplete. An empty findings list says “No issues reported” and retains checker coverage, rather than claiming correctness. The full plain-text report and source references remain available in a disclosure, and Copy/Download use that report. Review data is retained with successful messages in existing session history so the cards survive reload. Older messages and document-mode responses continue to render as text.
+
+All source, model, filename, and diagnostic text is rendered with DOM text nodes. Code uses scrollable monospace blocks that preserve whitespace. The mock API browser smoke test verifies ordering, code snippets, validation, escaped HTML-like source, reload, incomplete checks, and mobile widths, and writes desktop/mobile screenshots under ignored `.test-tools/` for visual inspection. These browser checks do not evaluate live model accuracy.

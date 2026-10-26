@@ -31,11 +31,11 @@ This is the execution checklist for the [project plan](PROJECT_PLAN.md). It assu
 
 **Lead:** C. **Support:** D for chunk boundaries. **Depends on:** phase 1 intake and database tables.
 
-- [ ] Extract TXT and Markdown while preserving paragraphs/headings; handle encoding failures.
+- [x] Extract TXT and Markdown while preserving paragraphs/headings; handle encoding failures. [P2-02 evidence](docs/phase2/TEXT_RETRIEVAL.md) records structural, retrieval, and upload/follow-up tests.
 - [x] Extract text-based PDF pages with pypdf and DOCX body paragraphs/headings/tables with python-docx. [P2-01 evidence](docs/phase2/DOCUMENT_EXTRACTION.md) records API tests and real browser/model runs.
 - [x] Save stable source IDs, page/section locations, and original ordering for every extractable span. PDF references use pages/lines; DOCX uses heading/paragraph/table-cell locations.
 - [x] Detect empty/image-only PDFs, corrupted files, oversized extracted text, and unsupported types; return actionable errors. Extraction also bounds PDF pages/decoded streams and DOCX package expansion/structure.
-- [ ] Chunk long documents by structure; evaluate retrieval by checking that known answer spans are selected.
+- [x] Chunk long documents into bounded page/paragraph/section spans; evaluate retrieval by checking that known answer spans are selected. Eleven synthetic retrieval cases pass; semantic retrieval quality and chunk-by-chunk summary synthesis remain to be evaluated/implemented.
 - [x] Disable image uploads in the frontend until OCR/vision is implemented. The current picker supports PDF/DOCX now that extraction is ready.
 
 **Exit:** A test corpus extracts with resolvable references; an image-only PDF is reported as unsupported rather than summarized as empty text.
@@ -44,12 +44,12 @@ This is the execution checklist for the [project plan](PROJECT_PLAN.md). It assu
 
 **Lead:** D for agent; C for code tools. **Depends on:** source mapping from phase 2. Some code-tool work can run alongside document extraction.
 
-- [ ] Implement a bounded state machine: classify request -> select evidence -> model call -> schema validation -> citation validation -> response.
-- [ ] Expose read-only source-span and Python-symbol tools. Keep model provider calls behind one replaceable adapter.
-- [ ] Add document summary and document Q&A prompts, including insufficient-evidence behavior and one bounded retry for malformed output.
-- [ ] Parse Python with `ast` and `tokenize` to identify functions/classes and accurate line numbers; run Ruff as a separate static check without executing user code.
-- [ ] Add code explanation and review prompts. Label findings as potential issues, with severity, location, and reasoning.
-- [ ] Persist source context on the server for follow-up questions; validate that conversation IDs belong to the signed-in user.
+- [x] Implement a bounded state machine: classify request -> select evidence -> model call -> schema validation -> citation validation -> response. [P3-01 evidence](docs/phase3/AGENT_WORKFLOW.md) records routing, provider-independent validation, bounded retry, and tests.
+- [x] Expose read-only source-span and Python-symbol tools. Keep model provider calls behind one replaceable adapter. [P3-02 evidence](docs/phase3/PYTHON_TOOLS.md) records scoped snapshots, AST/tokenize outlines, and code-mode integration.
+- [x] Add document summary and document Q&A prompts, including insufficient-evidence behavior and one bounded retry for malformed output. Implemented through the route prompts and adapter in [P3-01](docs/phase3/AGENT_WORKFLOW.md); factual quality and long-document synthesis remain separate work.
+- [x] Parse Python with `ast` and `tokenize` to identify functions/classes and accurate line numbers; run Ruff as a separate static check without executing user code. [P3-02](docs/phase3/PYTHON_TOOLS.md) covers structural analysis; [P3-03](docs/phase3/RUFF_CHECKS.md) covers bounded Ruff checks and structured tool findings.
+- [x] Add code explanation and review prompts. Label findings as potential issues, with severity, location, and reasoning. [P3-04](docs/phase3/MODEL_FINDINGS.md) records strict model schemas, source/line validation, combined display/storage, and live-model limitations.
+- [x] Persist source context on the server for follow-up questions; validate that conversation IDs belong to the signed-in user. Implemented in Phase 1 and covered by current API ownership/follow-up tests, including structured findings in P3-04.
 - [ ] Record request timing, token use, route, validation failures, and memory pressure without logging raw uploads by default.
 
 **Exit:** Document and Python workflows return structured, source-grounded results. The agent cannot run shell commands, write files, browse externally, or execute uploads.

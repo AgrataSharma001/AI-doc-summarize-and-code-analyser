@@ -29,4 +29,4 @@ Setup and fixture generation are documented in [browser verification](../../Fron
 
 ## Next work
 
-Continue Phase 2 with TXT/Markdown paragraph/heading boundaries and a broader retrieval evaluation corpus. P2-01 does not complete the remaining Phase 2 checklist or the Phase 0 model-quality/RAM spike.
+TXT/Markdown boundaries and a synthetic retrieval evaluation are now complete; see [P2-02 evidence](TEXT_RETRIEVAL.md). Continue with the Phase 3 bounded agent state machine. The Phase 0 model-quality/RAM spike remains pending.

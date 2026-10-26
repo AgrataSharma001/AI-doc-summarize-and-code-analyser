@@ -21,10 +21,15 @@ from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import JSONResponse
 
+from backend.agent import BoundedAgent, Route
 from backend.auth import database, require_same_origin, require_user
+from backend.code_findings import (
+    model_corrections, model_findings, preserve_correction_indentation, render_correction, render_finding,
+)
+from backend.correction_validation import render_validation, validate_corrections
 from backend.documents import extract_document
 from backend.models import Conversation, Result, SourceFile, User
-from backend.sources import MAX_CONVERSATION_CHARS, extract_text, select_evidence
+from backend.sources import MAX_CONVERSATION_CHARS, decode_text, extract_text
 
 MAX_FILES = 5
 MAX_FILE_BYTES = 10 * 1024 * 1024
@@ -107,10 +112,7 @@ def validate_file(filename: str, media_type: str, content: bytes, mode: str) -> 
     if not content:
         raise HTTPException(422, "Uploaded files must not be empty.")
     if extension in {".txt", ".md", ".py"}:
-        try:
-            text = content.decode("utf-8-sig")
-        except UnicodeDecodeError as exc:
-            raise HTTPException(422, "Text files must use UTF-8 encoding.") from exc
+        text = decode_text(content, extension)
         if not text.strip() or any(ord(c) < 32 and c not in "\t\n\r\f" for c in text):
             raise HTTPException(422, "File must contain nonblank text, without binary data.")
         if content.startswith((b"%PDF-", b"PK\x03\x04", b"\x89PNG")):
@@ -199,7 +201,8 @@ async def chat(
             if extension in {".pdf", ".docx"}:
                 extraction_warnings.extend(await asyncio.to_thread(extract_document, source, content, extension))
             else:
-                extract_text(source, content.decode("utf-8-sig"))
+                extract_text(source, decode_text(content, extension),
+                    structure="markdown" if extension == ".md" else "paragraphs" if extension == ".txt" else "lines")
             validated.append(source)
         existing = list(conversation.files) if conversation else []
         has_context = any(source.spans for source in existing)
@@ -209,16 +212,16 @@ async def chat(
             source = SourceFile(id=str(uuid4()), conversation_id=conversation_id,
                 filename="Pasted Python" if mode == "code" else "Pasted text", media_type="text/plain",
                 size_bytes=len(pasted.encode("utf-8")), created_at=now)
-            extract_text(source, pasted)
+            extract_text(source, pasted, structure="markdown" if mode == "document" else "lines")
             validated.append(source)
         all_files = existing + validated
         if sum(len(span.content) for source in all_files for span in source.spans) > MAX_CONVERSATION_CHARS:
             raise HTTPException(413, "Conversation sources exceed 500,000 characters. Start a new conversation.")
         default_question = "Explain the supplied Python." if mode == "code" else "Summarize the supplied text."
         question = default_question if is_paste else (message.strip() or default_question)
-        evidence, partial = select_evidence(all_files, question, request.app.state.settings.model_context_chars)
-        if not evidence:
-            raise HTTPException(422, "No source text is available. Reattach a text file or paste content.")
+        agent = BoundedAgent()
+        prepared = agent.prepare(mode, question, all_files, request.app.state.settings.model_context_chars)
+        evidence, partial = prepared.evidence, prepared.partial
         history = []
         if conversation:
             results = list(reversed(session.scalars(select(Result).where(Result.conversation_id == conversation_id,
@@ -241,7 +244,8 @@ async def chat(
     try:
         try:
             async with asyncio.timeout(2 * request.app.state.settings.ollama_timeout_seconds + 5):
-                answer = await request.app.state.model_adapter.answer(mode, question, evidence, history)
+                outcome = await agent.run(prepared, history, request.app.state.model_adapter)
+                answer = outcome.answer
         except TimeoutError as exc:
             raise HTTPException(504, "The local model timed out. Try a shorter request.") from exc
         conversation = session.get(Conversation, conversation_id)
@@ -262,14 +266,52 @@ async def chat(
                                         created_at=now, expires_at=now + RETENTION_SECONDS)
             session.add(conversation)
         citations = [span for span in evidence if span["id"] in answer["source_ids"]]
+        analysis = outcome.static_analysis
+        generated_findings = model_findings(answer, evidence) if mode == "code" else []
+        corrections = model_corrections(answer, evidence) if mode == "code" else []
+        for correction in corrections:
+            correction["code_excerpt"] = prepared.tools.get_code_excerpt(
+                correction["file_id"], correction["start_line"], correction["end_line"])
+            preserve_correction_indentation(correction)
+        correction_validation = await asyncio.to_thread(validate_corrections, prepared.tools, corrections) if corrections else []
+        findings = generated_findings + (analysis["findings"] if analysis else [])
+        for finding in findings:
+            finding["code_excerpt"] = prepared.tools.get_code_excerpt(
+                finding["file_id"], finding["line"], finding.get("end_line", finding["line"]))
+        if analysis:
+            known = {span["id"] for span in citations}
+            citations.extend(span for span in analysis["sources"] if span["id"] not in known)
         references = "\n\nSources:\n" + "\n".join(
             f"[source: {span['id']}, {span['filename']}, {span['location']}]" for span in citations)
-        warnings = list(extraction_warnings)
+        warnings = list(extraction_warnings) + list(prepared.warnings)
+        if analysis:
+            warnings.extend(analysis["warnings"])
         if partial:
             warnings.append("Only selected source excerpts fit the model context; this answer may omit other sections.")
         if len(question) > 3000:
             warnings.append("The request was shortened for the local model; use a shorter follow-up for specific questions.")
-        reply = answer["reply"] + references
+        reply = ("Review results for the selected source excerpts are shown below. "
+                 "Findings are potential issues and require verification."
+                 if prepared.route == Route.CODE_REVIEW else answer["reply"])
+        if analysis:
+            syntax_findings = [finding for finding in analysis["findings"] if finding["tool"] == "python"]
+            if syntax_findings:
+                reply += "\n\nPython syntax errors:"
+                reply += "".join(render_finding(finding) for finding in syntax_findings)
+        if generated_findings:
+            reply += "\n\nModel review (potential issues):"
+            reply += "".join(render_finding(finding) for finding in generated_findings)
+        if analysis:
+            ruff_findings = [finding for finding in analysis["findings"] if finding["tool"] == "ruff"]
+            reply += "\n\nRuff static checks (potential issues):"
+            reply += "".join(render_finding(finding) for finding in ruff_findings)
+            if not ruff_findings:
+                reply += "\nNo mapped findings returned; review any coverage warnings. These checks do not establish correctness."
+        if corrections:
+            reply += "\n\nSuggested corrections:"
+            reply += "".join(render_correction(correction) for correction in corrections)
+            reply += render_validation(correction_validation)
+        reply += references
         if warnings:
             reply += "\n\n" + "\n".join(warnings)
         conversation.files.extend(validated)
@@ -277,19 +319,32 @@ async def chat(
             Result(id=str(uuid4()), conversation_id=conversation_id, kind="user", content=question[:3000], created_at=now),
             Result(id=str(uuid4()), conversation_id=conversation_id, kind="assistant", content=reply, created_at=now),
         ])
+        if analysis:
+            session.add(Result(id=str(uuid4()), conversation_id=conversation_id, kind="analysis",
+                               content=json.dumps({"tools": ["python", "model", "ruff"], "findings": findings,
+                                                   "checks": analysis["checks"],
+                                                   "syntax_checks": analysis["syntax_checks"],
+                                                   "corrections": corrections,
+                                                   "correction_validation": correction_validation}), created_at=now))
         try:
             session.commit()
         except IntegrityError as exc:
             session.rollback()
             raise HTTPException(409, "Conversation changed. Retry the request.") from exc
-        logging.getLogger(__name__).info("Chat completed mode=%s elapsed_ms=%d sources=%d prompt_tokens=%s output_tokens=%s",
-            mode, int((time.monotonic() - started) * 1000), len(evidence),
+        logging.getLogger(__name__).info("Chat completed mode=%s route=%s stages=%s elapsed_ms=%d sources=%d prompt_tokens=%s output_tokens=%s",
+            mode, prepared.route.value, ",".join(outcome.stages), int((time.monotonic() - started) * 1000), len(evidence),
             answer.get("prompt_tokens"), answer.get("output_tokens"))
     finally:
         request.app.state.model_busy = False
     return {
         "status": "answered", "conversation_id": conversation_id, "reply": reply,
-        "source_ids": answer["source_ids"],
+        "source_ids": [span["id"] for span in citations],
+        **({"findings": findings, "corrections": corrections,
+            "analysis": {"tool": "ruff", "checks": analysis["checks"],
+                                              "correction_validation": correction_validation,
+                                              "syntax_checks": analysis["syntax_checks"],
+                                              "model_review": {"status": "validated", "finding_count": len(generated_findings)}}}
+           if analysis else {}),
         "sources": [{k: span[k] for k in ("id", "file_id", "filename", "location")} for span in citations],
         "warnings": warnings,
         "files": [{"id": f.id, "filename": f.filename, "size_bytes": f.size_bytes} for f in validated],

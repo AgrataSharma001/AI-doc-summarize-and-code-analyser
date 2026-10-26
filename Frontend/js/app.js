@@ -99,7 +99,8 @@
     try {
       const data = await window.DocodeAPI.chat({ mode, message: chat.messages.at(-1).content, files: attached, history, conversationId: chat.id }, controller.signal);
       if (active !== request) return;
-      chat.messages.push({ role: 'assistant', content: window.DocodeResults.normalize(data) });
+      chat.messages.push({ role: 'assistant', content: window.DocodeResults.normalize(data),
+        review: mode === 'code' ? window.DocodeResults.review(data) : null });
       clearFiles(); $('prompt').value = ''; $('backend-note').hidden = true; announce('Your response is ready.');
     } catch (err) {
       if (active !== request) return;
